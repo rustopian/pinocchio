@@ -287,7 +287,7 @@ where
     /// Assumes entries are sorted by slot in descending order.
     /// Returns the index of the matching entry, or `None` if not found.
     #[inline(always)]
-    fn binary_search_slot_standard<'s>(&'s self, target_slot: Slot) -> Option<usize> {
+    fn binary_search_slot_midpoint<'s>(&'s self, target_slot: Slot) -> Option<usize> {
         let mut low = 0;
         let mut high = self.len;
 
@@ -332,9 +332,9 @@ where
     /// Returns the hash if the slot is found, or `None` if not found.
     /// Assumes entries are sorted by slot in descending order.
     #[inline(always)]
-    pub fn get_hash_standard<'s>(&'s self, target_slot: Slot) -> Option<&'s [u8; HASH_BYTES]> {
+    pub fn get_hash_midpoint<'s>(&'s self, target_slot: Slot) -> Option<&'s [u8; HASH_BYTES]> {
         // Use the standard binary search helper to find the entry
-        self.binary_search_slot_standard(target_slot)
+        self.binary_search_slot_midpoint(target_slot)
             .and_then(|idx| self.get_entry(idx)) // Use safe get_entry after finding index
             .map(|entry| &entry.hash)
     }
@@ -344,9 +344,9 @@ where
     /// Returns the index if the slot is found, or `None` if not found.
     /// Assumes entries are sorted by slot in descending order.
     #[inline(always)]
-    pub fn position_standard(&self, target_slot: Slot) -> Option<usize> {
+    pub fn position_midpoint(&self, target_slot: Slot) -> Option<usize> {
         // Use the standard binary search helper directly
-        self.binary_search_slot_standard(target_slot)
+        self.binary_search_slot_midpoint(target_slot)
     }
 }
 
@@ -538,13 +538,13 @@ mod tests {
             assert_eq!(slot_hashes.position(84), None);
             
             // Test standard binary search position
-            assert_eq!(slot_hashes.position_standard(100), Some(0));
-            assert_eq!(slot_hashes.position_standard(98), Some(1));
-            assert_eq!(slot_hashes.position_standard(95), Some(2));
-            assert_eq!(slot_hashes.position_standard(90), Some(3));
-            assert_eq!(slot_hashes.position_standard(85), Some(4));
-            assert_eq!(slot_hashes.position_standard(99), None);
-            assert_eq!(slot_hashes.position_standard(84), None);
+            assert_eq!(slot_hashes.position_midpoint(100), Some(0));
+            assert_eq!(slot_hashes.position_midpoint(98), Some(1));
+            assert_eq!(slot_hashes.position_midpoint(95), Some(2));
+            assert_eq!(slot_hashes.position_midpoint(90), Some(3));
+            assert_eq!(slot_hashes.position_midpoint(85), Some(4));
+            assert_eq!(slot_hashes.position_midpoint(99), None);
+            assert_eq!(slot_hashes.position_midpoint(84), None);
             
             // Test binary search get_hash
             assert_eq!(slot_hashes.get_hash(100), Some(&[1u8; HASH_BYTES]));
@@ -552,15 +552,15 @@ mod tests {
             assert_eq!(slot_hashes.get_hash(99), None);
             
             // Test standard binary search get_hash
-            assert_eq!(slot_hashes.get_hash_standard(100), Some(&[1u8; HASH_BYTES]));
-            assert_eq!(slot_hashes.get_hash_standard(98), Some(&[2u8; HASH_BYTES]));
-            assert_eq!(slot_hashes.get_hash_standard(99), None);
+            assert_eq!(slot_hashes.get_hash_midpoint(100), Some(&[1u8; HASH_BYTES]));
+            assert_eq!(slot_hashes.get_hash_midpoint(98), Some(&[2u8; HASH_BYTES]));
+            assert_eq!(slot_hashes.get_hash_midpoint(99), None);
             
             // Test empty
             let empty_data = create_mock_data(&[]);
             let empty_hashes = unsafe { SlotHashes::new_unchecked(empty_data.as_slice(), 0) };
             assert_eq!(empty_hashes.position(100), None);
-            assert_eq!(empty_hashes.position_standard(100), None);
+            assert_eq!(empty_hashes.position_midpoint(100), None);
         }
         
         #[test]
@@ -764,13 +764,13 @@ mod tests {
             assert_eq!(slot_hashes.position(84), None);
             
             // Test standard binary search position
-            assert_eq!(slot_hashes.position_standard(100), Some(0));
-            assert_eq!(slot_hashes.position_standard(98), Some(1));
-            assert_eq!(slot_hashes.position_standard(95), Some(2));
-            assert_eq!(slot_hashes.position_standard(90), Some(3));
-            assert_eq!(slot_hashes.position_standard(85), Some(4));
-            assert_eq!(slot_hashes.position_standard(99), None);
-            assert_eq!(slot_hashes.position_standard(84), None);
+            assert_eq!(slot_hashes.position_midpoint(100), Some(0));
+            assert_eq!(slot_hashes.position_midpoint(98), Some(1));
+            assert_eq!(slot_hashes.position_midpoint(95), Some(2));
+            assert_eq!(slot_hashes.position_midpoint(90), Some(3));
+            assert_eq!(slot_hashes.position_midpoint(85), Some(4));
+            assert_eq!(slot_hashes.position_midpoint(99), None);
+            assert_eq!(slot_hashes.position_midpoint(84), None);
             
             // Test binary search get_hash
             assert_eq!(slot_hashes.get_hash(100), Some(&[1u8; HASH_BYTES]));
@@ -781,20 +781,20 @@ mod tests {
             assert_eq!(slot_hashes.get_hash(84), None);
             
             // Test standard binary search get_hash
-            assert_eq!(slot_hashes.get_hash_standard(100), Some(&[1u8; HASH_BYTES]));
-            assert_eq!(slot_hashes.get_hash_standard(98), Some(&[2u8; HASH_BYTES]));
-            assert_eq!(slot_hashes.get_hash_standard(85), Some(&[5u8; HASH_BYTES]));
-            assert_eq!(slot_hashes.get_hash_standard(99), None);
-            assert_eq!(slot_hashes.get_hash_standard(101), None);
-            assert_eq!(slot_hashes.get_hash_standard(84), None);
+            assert_eq!(slot_hashes.get_hash_midpoint(100), Some(&[1u8; HASH_BYTES]));
+            assert_eq!(slot_hashes.get_hash_midpoint(98), Some(&[2u8; HASH_BYTES]));
+            assert_eq!(slot_hashes.get_hash_midpoint(85), Some(&[5u8; HASH_BYTES]));
+            assert_eq!(slot_hashes.get_hash_midpoint(99), None);
+            assert_eq!(slot_hashes.get_hash_midpoint(101), None);
+            assert_eq!(slot_hashes.get_hash_midpoint(84), None);
             
             // Test empty
             let empty_data = create_mock_data(&[]);
             let empty_hashes = unsafe { SlotHashes::new_unchecked(empty_data.as_slice(), 0) };
             assert_eq!(empty_hashes.position(100), None);
-            assert_eq!(empty_hashes.position_standard(100), None);
+            assert_eq!(empty_hashes.position_midpoint(100), None);
             assert_eq!(empty_hashes.get_hash(100), None);
-            assert_eq!(empty_hashes.get_hash_standard(100), None);
+            assert_eq!(empty_hashes.get_hash_midpoint(100), None);
         }
     }
     
@@ -849,13 +849,13 @@ mod tests {
         assert_eq!(slot_hashes.get_hash(101), None); // > Max
         assert_eq!(slot_hashes.get_hash(84), None); // < Min
         
-        // Test get_hash_standard on main list
-        assert_eq!(slot_hashes.get_hash_standard(100), Some(&[1u8; HASH_BYTES])); // First
-        assert_eq!(slot_hashes.get_hash_standard(95), Some(&[3u8; HASH_BYTES])); // Middle
-        assert_eq!(slot_hashes.get_hash_standard(85), Some(&[5u8; HASH_BYTES])); // Last
-        assert_eq!(slot_hashes.get_hash_standard(99), None); // Between
-        assert_eq!(slot_hashes.get_hash_standard(101), None); // > Max
-        assert_eq!(slot_hashes.get_hash_standard(84), None); // < Min
+        // Test get_hash_midpoint on main list
+        assert_eq!(slot_hashes.get_hash_midpoint(100), Some(&[1u8; HASH_BYTES])); // First
+        assert_eq!(slot_hashes.get_hash_midpoint(95), Some(&[3u8; HASH_BYTES])); // Middle
+        assert_eq!(slot_hashes.get_hash_midpoint(85), Some(&[5u8; HASH_BYTES])); // Last
+        assert_eq!(slot_hashes.get_hash_midpoint(99), None); // Between
+        assert_eq!(slot_hashes.get_hash_midpoint(101), None); // > Max
+        assert_eq!(slot_hashes.get_hash_midpoint(84), None); // < Min
 
         // Test with smaller array (create new raw_data)
         let single_entry: &[(Slot, [u8; HASH_BYTES])] = &[(100, [1u8; HASH_BYTES])];
@@ -875,9 +875,9 @@ mod tests {
         // Test get_hash on single-entry list
         assert_eq!(small_mock.get_hash(100), Some(&[1u8; HASH_BYTES])); 
         assert_eq!(small_mock.get_hash(99), None);
-        // Test get_hash_standard on single-entry list
-        assert_eq!(small_mock.get_hash_standard(100), Some(&[1u8; HASH_BYTES]));
-        assert_eq!(small_mock.get_hash_standard(99), None);
+        // Test get_hash_midpoint on single-entry list
+        assert_eq!(small_mock.get_hash_midpoint(100), Some(&[1u8; HASH_BYTES]));
+        assert_eq!(small_mock.get_hash_midpoint(99), None);
 
         // Test empty list explicitly for get_hash
         let empty_num_bytes = (0u64).to_le_bytes();
@@ -885,7 +885,7 @@ mod tests {
         empty_raw_data[..NUM_ENTRIES_SIZE].copy_from_slice(&empty_num_bytes);
         let empty_hashes = unsafe { SlotHashes::new_unchecked(&empty_raw_data[..], 0) };
         assert_eq!(empty_hashes.get_hash(100), None);
-        assert_eq!(empty_hashes.get_hash_standard(100), None);
+        assert_eq!(empty_hashes.get_hash_midpoint(100), None);
     }
 
     // No-std compatible tests
