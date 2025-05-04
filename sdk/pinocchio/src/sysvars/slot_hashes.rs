@@ -76,21 +76,22 @@ where
     /// Returns (number_of_entries, required_length) if valid.
     #[inline(always)]
     fn parse_and_validate_data(data: &[u8]) -> Result<(usize, usize), ProgramError> {
-        if data.len() < NUM_ENTRIES_SIZE {
+        if data.len() < NUM_ENTRIES_SIZE { // Check 3a: Data long enough for len prefix
             return Err(ProgramError::AccountDataTooSmall);
         }
         
         let len_bytes: [u8; NUM_ENTRIES_SIZE] = 
             unsafe { data.get_unchecked(0..NUM_ENTRIES_SIZE) }.try_into().unwrap();
-        let num_entries = u64::from_le_bytes(len_bytes);
-        let num_entries = (num_entries as usize).min(MAX_ENTRIES);
+        let num_entries = u64::from_le_bytes(len_bytes); // Parses len as u64
+        let num_entries_usize = (num_entries as usize).min(MAX_ENTRIES);
         
-        let required_len = NUM_ENTRIES_SIZE.saturating_add(num_entries.saturating_mul(ENTRY_SIZE));
-        if data.len() < required_len {
-            return Err(ProgramError::InvalidAccountData);
+        let required_len = NUM_ENTRIES_SIZE.saturating_add(num_entries_usize.saturating_mul(ENTRY_SIZE));
+        
+        if data.len() < required_len { // Check 3b: Data long enough for declared entries
+            return Err(ProgramError::InvalidAccountData); // <- THIS IS THE ERROR WE GET
         }
         
-        Ok((num_entries, required_len))
+        Ok((num_entries_usize, required_len))
     }
 
     /// Validates a byte slice as SlotHashes data and returns the entry count.
