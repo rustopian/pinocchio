@@ -10,10 +10,8 @@ use crate::{
     program_error::ProgramError,
     pubkey::Pubkey,
     sysvars::clock::Slot,
-    msg,
 };
 use core::{mem, ops::Deref};
-use crate::syscalls::sol_log_64_;
 
 /// SysvarS1otHashes111111111111111111111111111
 pub const SLOTHASHES_ID: Pubkey = [
@@ -223,10 +221,16 @@ where
     #[inline(always)]
     fn binary_search_slot(&self, target_slot: Slot) -> Option<usize> {
         let len = self.len;
-        if len == 0 { return None; }
+        if len == 0 {
+            return None;
+        }
         let first_slot = unsafe { self.get_entry_unchecked(0).slot };
-        if target_slot > first_slot { return None; }
-        if target_slot == first_slot { return Some(0); }
+        if target_slot > first_slot {
+            return None;
+        }
+        if target_slot == first_slot {
+            return Some(0);
+        }
 
         let mut low = 0;
         let mut high = len;
@@ -253,7 +257,9 @@ where
                 }
             }
             // Check if bounds crossed after update
-            if low >= high { break; }
+            if low >= high {
+                break;
+            }
         }
         None // Not found
     }
@@ -363,46 +369,70 @@ impl<'a> SlotHashes<Ref<'a, [u8]>> {
     }
 }
 
-// --- Standalone Unsafe Access Functions --- 
+// --- Standalone Unsafe Access Functions ---
 
 /// Reads the entry count directly from the beginning of a byte slice **without validation**.
 /// (This is identical to the struct method, added here for discoverability with other unchecked fns)
+///
+/// # Safety
+///
+/// This function is unsafe because it performs no checks on the input slice.
+/// The caller **must** ensure that:
+/// 1. `data` contains at least `NUM_ENTRIES_SIZE` (8) bytes.
+/// 2. The first 8 bytes represent a valid `u64` in little-endian format.
+/// 3. Calling this function without ensuring the above may lead to panics
+///    (out-of-bounds access) or incorrect results.
 #[inline(always)]
 pub unsafe fn get_entry_count_unchecked(data: &[u8]) -> usize {
     // Unsafe access: assumes data has at least NUM_ENTRIES_SIZE bytes.
     let len_bytes: [u8; NUM_ENTRIES_SIZE] = data
         .get_unchecked(0..NUM_ENTRIES_SIZE)
         .try_into()
-        .unwrap_unchecked(); 
+        .unwrap_unchecked();
     let num_entries = u64::from_le_bytes(len_bytes);
     (num_entries as usize).min(MAX_ENTRIES) // Cap at MAX_ENTRIES
 }
 
 /// Performs an **unsafe** interpolation binary search directly on a raw byte slice.
-/// 
+///
 /// # Safety
 /// Caller must guarantee `data` contains a valid `SlotHashes` structure.
 #[inline(always)]
 pub unsafe fn position_from_slice_unchecked(data: &[u8], target_slot: Slot) -> Option<usize> {
     let len = get_entry_count_unchecked(data);
-    if len == 0 { return None; }
-    let first_slot = u64::from_le_bytes(data.get_unchecked(NUM_ENTRIES_SIZE..NUM_ENTRIES_SIZE+SLOT_SIZE).try_into().unwrap_unchecked());
-    
-    if target_slot > first_slot { return None; }
-    if target_slot == first_slot { return Some(0); }
+    if len == 0 {
+        return None;
+    }
+    let first_slot = u64::from_le_bytes(
+        data.get_unchecked(NUM_ENTRIES_SIZE..NUM_ENTRIES_SIZE + SLOT_SIZE)
+            .try_into()
+            .unwrap_unchecked(),
+    );
+
+    if target_slot > first_slot {
+        return None;
+    }
+    if target_slot == first_slot {
+        return Some(0);
+    }
 
     let mut low = 0;
     let mut high = len;
     let entries_data_start = NUM_ENTRIES_SIZE;
 
     while low < high {
-        let delta_slots = first_slot - target_slot; 
+        let delta_slots = first_slot - target_slot;
         let estimated_index = ((delta_slots * 19) / 20) as usize;
         let mid = estimated_index.clamp(low, high.saturating_sub(1));
 
         let entry_offset = entries_data_start + mid * ENTRY_SIZE;
         let entry_bytes = data.get_unchecked(entry_offset..(entry_offset + ENTRY_SIZE));
-        let entry_slot = u64::from_le_bytes(entry_bytes.get_unchecked(0..SLOT_SIZE).try_into().unwrap_unchecked());
+        let entry_slot = u64::from_le_bytes(
+            entry_bytes
+                .get_unchecked(0..SLOT_SIZE)
+                .try_into()
+                .unwrap_unchecked(),
+        );
 
         match entry_slot.cmp(&target_slot) {
             core::cmp::Ordering::Equal => return Some(mid),
@@ -419,33 +449,45 @@ pub unsafe fn position_from_slice_unchecked(data: &[u8], target_slot: Slot) -> O
                 low = low.max(min_possible_index);
             }
         }
-        if low >= high { break; }
+        if low >= high {
+            break;
+        }
     }
     None
 }
 
 /// Performs an **unsafe** standard midpoint binary search directly on a raw byte slice.
-/// 
+///
 /// # Safety
 /// Caller must guarantee `data` contains a valid `SlotHashes` structure.
 #[inline(always)]
-pub unsafe fn position_midpoint_from_slice_unchecked(data: &[u8], target_slot: Slot) -> Option<usize> {
+pub unsafe fn position_midpoint_from_slice_unchecked(
+    data: &[u8],
+    target_slot: Slot,
+) -> Option<usize> {
     let len = get_entry_count_unchecked(data);
-    if len == 0 { return None; }
+    if len == 0 {
+        return None;
+    }
 
     let mut low = 0;
     let mut high = len;
     let entries_data_start = NUM_ENTRIES_SIZE;
 
     while low < high {
-        let mid = low + (high - low) / 2; 
+        let mid = low + (high - low) / 2;
         let entry_offset = entries_data_start + mid * ENTRY_SIZE;
         let entry_bytes = data.get_unchecked(entry_offset..(entry_offset + ENTRY_SIZE));
-        let entry_slot = u64::from_le_bytes(entry_bytes.get_unchecked(0..SLOT_SIZE).try_into().unwrap_unchecked());
+        let entry_slot = u64::from_le_bytes(
+            entry_bytes
+                .get_unchecked(0..SLOT_SIZE)
+                .try_into()
+                .unwrap_unchecked(),
+        );
 
         match entry_slot.cmp(&target_slot) {
             core::cmp::Ordering::Equal => return Some(mid),
-            core::cmp::Ordering::Less => high = mid, 
+            core::cmp::Ordering::Less => high = mid,
             core::cmp::Ordering::Greater => low = mid + 1,
         }
     }
@@ -453,11 +495,14 @@ pub unsafe fn position_midpoint_from_slice_unchecked(data: &[u8], target_slot: S
 }
 
 /// Gets a reference to the hash for a specific slot from a raw byte slice **without validation**.
-/// 
+///
 /// # Safety
 /// Caller must guarantee `data` contains a valid `SlotHashes` structure.
 #[inline(always)]
-pub unsafe fn get_hash_from_slice_unchecked<'a>(data: &'a [u8], target_slot: Slot) -> Option<&'a [u8; HASH_BYTES]> {
+pub unsafe fn get_hash_from_slice_unchecked(
+    data: &[u8],
+    target_slot: Slot,
+) -> Option<&[u8; HASH_BYTES]> {
     position_from_slice_unchecked(data, target_slot).map(|index| {
         let entry_offset = NUM_ENTRIES_SIZE + index * ENTRY_SIZE;
         let hash_offset = entry_offset + SLOT_SIZE;
@@ -467,11 +512,14 @@ pub unsafe fn get_hash_from_slice_unchecked<'a>(data: &'a [u8], target_slot: Slo
 }
 
 /// Gets a reference to the hash for a specific slot from a raw byte slice using midpoint search **without validation**.
-/// 
+///
 /// # Safety
 /// Caller must guarantee `data` contains a valid `SlotHashes` structure.
 #[inline(always)]
-pub unsafe fn get_hash_midpoint_from_slice_unchecked<'a>(data: &'a [u8], target_slot: Slot) -> Option<&'a [u8; HASH_BYTES]> {
+pub unsafe fn get_hash_midpoint_from_slice_unchecked(
+    data: &[u8],
+    target_slot: Slot,
+) -> Option<&[u8; HASH_BYTES]> {
     position_midpoint_from_slice_unchecked(data, target_slot).map(|index| {
         let entry_offset = NUM_ENTRIES_SIZE + index * ENTRY_SIZE;
         let hash_offset = entry_offset + SLOT_SIZE;
@@ -481,11 +529,11 @@ pub unsafe fn get_hash_midpoint_from_slice_unchecked<'a>(data: &'a [u8], target_
 }
 
 /// Gets a reference to the `SlotHashEntry` at a specific index from a raw byte slice **without validation**.
-/// 
+///
 /// # Safety
 /// Caller must guarantee `data` contains a valid `SlotHashes` structure and that `index` is less than the entry count derived from the data's prefix.
 #[inline(always)]
-pub unsafe fn get_entry_from_slice_unchecked<'a>(data: &'a [u8], index: usize) -> &'a SlotHashEntry {
+pub unsafe fn get_entry_from_slice_unchecked(data: &[u8], index: usize) -> &SlotHashEntry {
     let entry_offset = NUM_ENTRIES_SIZE + index * ENTRY_SIZE;
     let entry_bytes = data.get_unchecked(entry_offset..(entry_offset + ENTRY_SIZE));
     &*(entry_bytes.as_ptr() as *const SlotHashEntry)
@@ -914,7 +962,8 @@ mod tests {
         fn test_unchecked_static_functions() {
             const NUM_ENTRIES: usize = 10;
             const START_SLOT: u64 = 100;
-            let mock_entries = generate_mock_entries(NUM_ENTRIES, START_SLOT, DecrementStrategy::Average1_05);
+            let mock_entries =
+                generate_mock_entries(NUM_ENTRIES, START_SLOT, DecrementStrategy::Average1_05);
             let data = create_mock_data(&mock_entries);
 
             let first_slot = mock_entries[0].0;
@@ -931,16 +980,37 @@ mod tests {
 
                 // Test position_from_slice_unchecked
                 assert_eq!(position_from_slice_unchecked(&data, first_slot), Some(0));
-                assert_eq!(position_from_slice_unchecked(&data, mid_slot), Some(mid_index));
-                assert_eq!(position_from_slice_unchecked(&data, last_slot), Some(NUM_ENTRIES - 1));
-                assert_eq!(position_from_slice_unchecked(&data, missing_slot_high), None);
+                assert_eq!(
+                    position_from_slice_unchecked(&data, mid_slot),
+                    Some(mid_index)
+                );
+                assert_eq!(
+                    position_from_slice_unchecked(&data, last_slot),
+                    Some(NUM_ENTRIES - 1)
+                );
+                assert_eq!(
+                    position_from_slice_unchecked(&data, missing_slot_high),
+                    None
+                );
                 assert_eq!(position_from_slice_unchecked(&data, missing_slot_low), None);
 
                 // Test get_hash_from_slice_unchecked
-                assert_eq!(get_hash_from_slice_unchecked(&data, first_slot), Some(&mock_entries[0].1));
-                assert_eq!(get_hash_from_slice_unchecked(&data, mid_slot), Some(&mock_entries[mid_index].1));
-                assert_eq!(get_hash_from_slice_unchecked(&data, last_slot), Some(&mock_entries[NUM_ENTRIES - 1].1));
-                assert_eq!(get_hash_from_slice_unchecked(&data, missing_slot_high), None);
+                assert_eq!(
+                    get_hash_from_slice_unchecked(&data, first_slot),
+                    Some(&mock_entries[0].1)
+                );
+                assert_eq!(
+                    get_hash_from_slice_unchecked(&data, mid_slot),
+                    Some(&mock_entries[mid_index].1)
+                );
+                assert_eq!(
+                    get_hash_from_slice_unchecked(&data, last_slot),
+                    Some(&mock_entries[NUM_ENTRIES - 1].1)
+                );
+                assert_eq!(
+                    get_hash_from_slice_unchecked(&data, missing_slot_high),
+                    None
+                );
                 assert_eq!(get_hash_from_slice_unchecked(&data, missing_slot_low), None);
 
                 // Test get_entry_from_slice_unchecked
@@ -1033,7 +1103,8 @@ mod tests {
         const START_SLOT: u64 = 2000;
 
         // Generate entries using Avg1.05 strategy
-        let entries = generate_mock_entries(TEST_NUM_ENTRIES, START_SLOT, DecrementStrategy::Average1_05);
+        let entries =
+            generate_mock_entries(TEST_NUM_ENTRIES, START_SLOT, DecrementStrategy::Average1_05);
         let data = create_mock_data_no_std(&entries);
         let entry_count = entries.len();
 
@@ -1049,16 +1120,17 @@ mod tests {
         // Test the default (interpolation) binary search algorithm
         assert_eq!(slot_hashes.position(first_slot), Some(0));
 
-        // --- Detailed check for mid_slot --- 
+        // --- Detailed check for mid_slot ---
         let expected_mid_index = Some(mid_index);
         let actual_pos_mid = slot_hashes.position(mid_slot);
         if actual_pos_mid != expected_mid_index {
             // Extract surrounding entries for context
             let start_idx = mid_index.saturating_sub(2);
             let end_idx = core::cmp::min(entry_count, mid_index.saturating_add(3));
-            let surrounding_entries: std::vec::Vec<_> = entries[start_idx..end_idx].iter().map(|e| e.0).collect(); // Use std::vec! here
+            let surrounding_entries: std::vec::Vec<_> =
+                entries[start_idx..end_idx].iter().map(|e| e.0).collect(); // Use std::vec! here
             panic!(
-                "Assertion `position({}) == {:?}` failed! Actual: {:?}. Surrounding slots: {:?}", 
+                "Assertion `position({}) == {:?}` failed! Actual: {:?}. Surrounding slots: {:?}",
                 mid_slot, expected_mid_index, actual_pos_mid, surrounding_entries
             );
         }
@@ -1081,13 +1153,16 @@ mod tests {
         if let Some(missing_slot) = missing_internal_slot {
             assert_eq!(slot_hashes.position(missing_slot), None);
         } else {
-             // panic! or log if needed: cannot test internal miss without a gap
+            // panic! or log if needed: cannot test internal miss without a gap
         }
 
         // Test get_hash (interpolation)
         assert_eq!(slot_hashes.get_hash(first_slot), Some(&entries[0].1));
         assert_eq!(slot_hashes.get_hash(mid_slot), Some(&entries[mid_index].1));
-        assert_eq!(slot_hashes.get_hash(last_slot), Some(&entries[entry_count - 1].1));
+        assert_eq!(
+            slot_hashes.get_hash(last_slot),
+            Some(&entries[entry_count - 1].1)
+        );
         assert_eq!(slot_hashes.get_hash(START_SLOT + 1), None);
 
         // Conditionally test midpoint functions if feature enabled
@@ -1096,17 +1171,32 @@ mod tests {
             // Test standard binary search position
             assert_eq!(slot_hashes.position_midpoint(first_slot), Some(0));
             assert_eq!(slot_hashes.position_midpoint(mid_slot), Some(mid_index));
-            assert_eq!(slot_hashes.position_midpoint(last_slot), Some(entry_count - 1));
+            assert_eq!(
+                slot_hashes.position_midpoint(last_slot),
+                Some(entry_count - 1)
+            );
             assert_eq!(slot_hashes.position_midpoint(START_SLOT + 1), None);
             if let Some(missing_slot) = missing_internal_slot {
-                 assert_eq!(slot_hashes.position_midpoint(missing_slot), None);
+                assert_eq!(slot_hashes.position_midpoint(missing_slot), None);
             }
-            assert_eq!(slot_hashes.position_midpoint(last_slot.saturating_sub(1)), None);
+            assert_eq!(
+                slot_hashes.position_midpoint(last_slot.saturating_sub(1)),
+                None
+            );
 
             // Test standard binary search get_hash
-            assert_eq!(slot_hashes.get_hash_midpoint(first_slot), Some(&entries[0].1));
-            assert_eq!(slot_hashes.get_hash_midpoint(mid_slot), Some(&entries[mid_index].1));
-            assert_eq!(slot_hashes.get_hash_midpoint(last_slot), Some(&entries[entry_count - 1].1));
+            assert_eq!(
+                slot_hashes.get_hash_midpoint(first_slot),
+                Some(&entries[0].1)
+            );
+            assert_eq!(
+                slot_hashes.get_hash_midpoint(mid_slot),
+                Some(&entries[mid_index].1)
+            );
+            assert_eq!(
+                slot_hashes.get_hash_midpoint(last_slot),
+                Some(&entries[entry_count - 1].1)
+            );
             assert_eq!(slot_hashes.get_hash_midpoint(START_SLOT + 1), None);
         }
 
@@ -1120,7 +1210,10 @@ mod tests {
         // --- Add Panic for failing assertion to see context ---
         let pos_start_plus_1 = slot_hashes.position(START_SLOT + 1);
         if pos_start_plus_1.is_some() {
-             panic!("Assertion `position(START_SLOT + 1) == None` failed! mid_slot={}, Found: {:?}", mid_slot, pos_start_plus_1);
+            panic!(
+                "Assertion `position(START_SLOT + 1) == None` failed! mid_slot={}, Found: {:?}",
+                mid_slot, pos_start_plus_1
+            );
         }
         // --- End Panic ---
         assert_eq!(pos_start_plus_1, None);
@@ -1165,9 +1258,14 @@ mod tests {
         let mut iter_hint = slot_hashes.into_iter();
         assert_eq!(iter_hint.size_hint(), (NUM_ENTRIES, Some(NUM_ENTRIES)));
         iter_hint.next();
-        assert_eq!(iter_hint.size_hint(), (NUM_ENTRIES - 1, Some(NUM_ENTRIES - 1)));
+        assert_eq!(
+            iter_hint.size_hint(),
+            (NUM_ENTRIES - 1, Some(NUM_ENTRIES - 1))
+        );
         // Skip to end
-        for _ in 1..NUM_ENTRIES { iter_hint.next(); }
+        for _ in 1..NUM_ENTRIES {
+            iter_hint.next();
+        }
         iter_hint.next();
         assert_eq!(iter_hint.size_hint(), (0, Some(0)));
 
