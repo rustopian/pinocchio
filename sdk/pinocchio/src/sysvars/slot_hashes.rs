@@ -429,7 +429,6 @@ pub unsafe fn position_from_slice_unchecked(data: &[u8], target_slot: Slot) -> O
 /// # Safety
 /// Caller must guarantee `data` contains a valid `SlotHashes` structure.
 #[inline(always)]
-#[cfg(any(test, feature = "test-helpers"))] // Keep gated for now unless needed by default
 pub unsafe fn position_midpoint_from_slice_unchecked(data: &[u8], target_slot: Slot) -> Option<usize> {
     let len = get_entry_count_unchecked(data);
     if len == 0 { return None; }
@@ -472,7 +471,6 @@ pub unsafe fn get_hash_from_slice_unchecked<'a>(data: &'a [u8], target_slot: Slo
 /// # Safety
 /// Caller must guarantee `data` contains a valid `SlotHashes` structure.
 #[inline(always)]
-#[cfg(any(test, feature = "test-helpers"))] // Keep gated for now
 pub unsafe fn get_hash_midpoint_from_slice_unchecked<'a>(data: &'a [u8], target_slot: Slot) -> Option<&'a [u8; HASH_BYTES]> {
     position_midpoint_from_slice_unchecked(data, target_slot).map(|index| {
         let entry_offset = NUM_ENTRIES_SIZE + index * ENTRY_SIZE;
