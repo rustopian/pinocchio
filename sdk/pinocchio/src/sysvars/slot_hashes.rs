@@ -269,7 +269,6 @@ where
     /// Assumes entries are sorted by slot in descending order.
     /// Returns the index of the matching entry, or `None` if not found.
     #[inline(always)]
-    #[cfg(any(test, feature = "test-helpers"))]
     fn binary_search_slot_midpoint(&self, target_slot: Slot) -> Option<usize> {
         if self.len == 0 {
             return None;
@@ -319,7 +318,6 @@ where
     /// Returns the hash if the slot is found, or `None` if not found.
     /// Assumes entries are sorted by slot in descending order.
     #[inline(always)]
-    #[cfg(any(test, feature = "test-helpers"))]
     pub fn get_hash_midpoint(&self, target_slot: Slot) -> Option<&[u8; HASH_BYTES]> {
         // Use the standard binary search helper to find the entry
         self.binary_search_slot_midpoint(target_slot)
@@ -332,7 +330,6 @@ where
     /// Returns the index if the slot is found, or `None` if not found.
     /// Assumes entries are sorted by slot in descending order.
     #[inline(always)]
-    #[cfg(any(test, feature = "test-helpers"))]
     pub fn position_midpoint(&self, target_slot: Slot) -> Option<usize> {
         // Use the standard binary search helper directly
         self.binary_search_slot_midpoint(target_slot)
@@ -1166,7 +1163,6 @@ mod tests {
         assert_eq!(slot_hashes.get_hash(START_SLOT + 1), None);
 
         // Conditionally test midpoint functions if feature enabled
-        #[cfg(feature = "test-helpers")]
         {
             // Test standard binary search position
             assert_eq!(slot_hashes.position_midpoint(first_slot), Some(0));
@@ -1314,7 +1310,7 @@ mod tests {
         let empty_num_bytes = (0u64).to_le_bytes();
         let mut empty_raw_data = [0u8; NUM_ENTRIES_SIZE];
         empty_raw_data[..NUM_ENTRIES_SIZE].copy_from_slice(&empty_num_bytes);
-        let empty_res = SlotHashes::<&[u8]>::from_bytes(&empty_raw_data[..]);
+        let empty_res = SlotHashes::<&[u8]>::from_bytes(empty_raw_data.as_slice());
         assert!(empty_res.is_ok());
         assert_eq!(empty_res.unwrap(), 0);
     }
