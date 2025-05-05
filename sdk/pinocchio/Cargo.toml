@@ -19,10 +19,3 @@ unexpected_cfgs = { level = "warn", check-cfg = [
 
 [features]
 std = []
-
-[dev-dependencies]
-# std = "1.0.0" # Cannot add std as a crate dependency
-solana-sdk = "1.18"
-# Add deps for integration-style test
-solana-program-test = "1.18"
-tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
