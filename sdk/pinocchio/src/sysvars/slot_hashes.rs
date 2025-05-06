@@ -737,9 +737,8 @@ mod tests {
             if let Some(missing_slot) = missing_internal_slot {
                 assert_eq!(slot_hashes.position(missing_slot), None); // Test interpolation search miss
             } else {
-                std::println!(
-                    "[WARN] Could not find internal gap for missing slot test in std_tests"
-                );
+                // This shouldn't happen with Avg1.05 or Avg2, but handle case
+                println!("[WARN] Could not find internal gap for missing slot test in std_tests");
             }
             assert_eq!(slot_hashes.position(last_slot.saturating_sub(1)), None); // Test near end (usually none)
 
@@ -888,6 +887,75 @@ mod tests {
         }
 
         #[test]
+        #[allow(deprecated)] // Allow use of deprecated AccountInfo fields for mocking
+        fn test_from_account_info() {
+            use crate::account_info::AccountInfo;
+            use crate::sysvar::SysvarId; // For SLOTHASHES_ID
+            use std::cell::RefCell;
+            use std::rc::Rc;
+
+            let key = SLOTHASHES_ID;
+            let mut lamports = 0;
+            let owner = Pubkey::new_unique(); // Mock owner
+
+            // Case 1: Valid data
+            let mock_entries = generate_mock_entries(1, 100, DecrementStrategy::Strictly1);
+            let mut data = create_mock_data(&mock_entries);
+            let account_info_ok = AccountInfo {
+                key: &key,
+                is_signer: false,
+                is_writable: false,
+                lamports: Rc::new(RefCell::new(&mut lamports)),
+                data: Rc::new(RefCell::new(&mut data)),
+                owner: &owner,
+                executable: false,
+                rent_epoch: 0,
+            };
+            let slot_hashes_res = SlotHashes::from_account_info(&account_info_ok);
+            assert!(slot_hashes_res.is_ok());
+            let slot_hashes = slot_hashes_res.unwrap();
+            assert_eq!(slot_hashes.len(), 1);
+            assert_eq!(slot_hashes.get_entry(0).unwrap().slot, 100);
+
+            // Case 2: Invalid Key
+            let wrong_key = Pubkey::new_unique();
+            let account_info_wrong_key = AccountInfo {
+                key: &wrong_key,
+                ..account_info_ok.clone()
+            };
+            let res_wrong_key = SlotHashes::from_account_info(&account_info_wrong_key);
+            assert!(matches!(res_wrong_key, Err(ProgramError::InvalidArgument)));
+
+            // Case 3: Data too small
+            let mut short_data = vec![0u8; 4]; // Less than NUM_ENTRIES_SIZE
+            let account_info_short = AccountInfo {
+                data: Rc::new(RefCell::new(&mut short_data)),
+                ..account_info_ok.clone()
+            };
+            let res_short = SlotHashes::from_account_info(&account_info_short);
+            assert!(matches!(res_short, Err(ProgramError::AccountDataTooSmall)));
+
+            // Case 4: Invalid data (length mismatch)
+            let mut invalid_data = create_mock_data(&mock_entries);
+            invalid_data.truncate(NUM_ENTRIES_SIZE + ENTRY_SIZE - 1); // Not enough for declared entry
+            let account_info_invalid = AccountInfo {
+                data: Rc::new(RefCell::new(&mut invalid_data)),
+                ..account_info_ok.clone()
+            };
+            let res_invalid = SlotHashes::from_account_info(&account_info_invalid);
+            assert!(matches!(res_invalid, Err(ProgramError::InvalidAccountData)));
+
+            // Case 5: Borrow fail (already borrowed mutably elsewhere - simulated)
+            // This is harder to directly test without more complex mocking or real runtime
+            // let _borrow = account_info_ok.data.borrow_mut();
+            // let res_borrow_fail = SlotHashes::from_account_info(&account_info_ok);
+            // assert!(matches!(res_borrow_fail, Err(ProgramError::AccountBorrowFailed)));
+            // Drop the borrow explicitly if tested: drop(_borrow);
+        }
+
+        // --- Tests for Unsafe Static Functions ---
+
+        #[test]
         fn test_unchecked_static_functions() {
             const NUM_ENTRIES: usize = 10;
             const START_SLOT: u64 = 100;
@@ -960,10 +1028,13 @@ mod tests {
                 // Calling get_entry_from_slice_unchecked with index 0 on empty data is UB, not tested.
             }
         }
+
+        // --- End Tests for Unsafe Static Functions ---
     }
 
     // --- Copied from benchmark setup for no_std test generation ---
     #[derive(Clone, Copy, Debug)]
+    #[allow(dead_code)]
     enum DecrementStrategy {
         Strictly1,
         Average1_05,
