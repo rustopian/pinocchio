@@ -604,7 +604,8 @@ where
 mod tests {
     use super::*;
     use core::mem::{align_of, size_of};
-    extern crate std; // Needed for Vec in tests
+    extern crate std;
+    #[allow(unused_imports)]
     use std::vec::Vec;
 
     #[cfg(feature = "std")]
@@ -621,62 +622,61 @@ mod tests {
         assert_eq!(align_of::<SlotHashEntry>(), align_of::<u64>());
     }
 
+    // Helper function create mock data buffer (used by std and no_std tests)
+    fn create_mock_data(entries: &[(u64, [u8; 32])]) -> Vec<u8> {
+        let num_entries = entries.len() as u64;
+        let data_len = NUM_ENTRIES_SIZE + entries.len() * ENTRY_SIZE;
+        let mut data = std::vec![0u8; data_len];
+        data[0..NUM_ENTRIES_SIZE].copy_from_slice(&num_entries.to_le_bytes()); // Now safe to write prefix
+        let mut offset = NUM_ENTRIES_SIZE;
+        for (slot, hash) in entries {
+            data[offset..offset + SLOT_SIZE].copy_from_slice(&slot.to_le_bytes());
+            data[offset + SLOT_SIZE..offset + ENTRY_SIZE].copy_from_slice(hash);
+            offset += ENTRY_SIZE;
+        }
+        data
+    }
+
+    // Helper function to generate mock SlotHashes entries for tests
+    fn generate_mock_entries(
+        num_entries: usize,
+        start_slot: u64,
+        strategy: DecrementStrategy,
+    ) -> Vec<(u64, [u8; 32])> {
+        let mut entries = Vec::with_capacity(num_entries);
+        let mut current_slot = start_slot;
+        for i in 0..num_entries {
+            let hash_byte = (i % 256) as u8;
+            let hash = [hash_byte; 32];
+            entries.push((current_slot, hash));
+            let random_val = simple_prng(i as u64);
+            let decrement = match strategy {
+                DecrementStrategy::Strictly1 => 1,
+                DecrementStrategy::Average1_05 => {
+                    if random_val % 20 == 0 {
+                        2
+                    } else {
+                        1
+                    }
+                }
+                #[allow(dead_code)] // May be used by benchmarks
+                DecrementStrategy::Average2 => {
+                    if random_val % 2 == 0 {
+                        1
+                    } else {
+                        3
+                    }
+                }
+            };
+            current_slot = current_slot.saturating_sub(decrement);
+        }
+        entries
+    }
+
     // Tests requiring std (Vec, allocation)
     #[cfg(feature = "std")]
     mod std_tests {
         use super::*;
-        #[allow(unused_imports)]
-        use std::{vec, vec::Vec};
-
-        // Helper function to generate mock SlotHashes entries for tests
-        fn generate_mock_entries(
-            num_entries: usize,
-            start_slot: u64,
-            strategy: DecrementStrategy,
-        ) -> Vec<(u64, [u8; 32])> {
-            let mut entries = Vec::with_capacity(num_entries);
-            let mut current_slot = start_slot;
-            for i in 0..num_entries {
-                let hash_byte = (i % 256) as u8;
-                let hash = [hash_byte; 32];
-                entries.push((current_slot, hash));
-                let random_val = simple_prng(i as u64);
-                let decrement = match strategy {
-                    DecrementStrategy::Strictly1 => 1,
-                    DecrementStrategy::Average1_05 => {
-                        if random_val % 20 == 0 {
-                            2
-                        } else {
-                            1
-                        }
-                    }
-                    DecrementStrategy::Average2 => {
-                        if random_val % 2 == 0 {
-                            1
-                        } else {
-                            3
-                        }
-                    }
-                };
-                current_slot = current_slot.saturating_sub(decrement);
-            }
-            entries
-        }
-
-        // Helper function create mock data buffer (used by std and no_std tests)
-        fn create_mock_data(entries: &[(u64, [u8; 32])]) -> Vec<u8> {
-            let num_entries = entries.len() as u64;
-            let data_len = NUM_ENTRIES_SIZE + entries.len() * ENTRY_SIZE;
-            let mut data = std::vec![0u8; data_len];
-            data[0..NUM_ENTRIES_SIZE].copy_from_slice(&num_entries.to_le_bytes()); // Now safe to write prefix
-            let mut offset = NUM_ENTRIES_SIZE;
-            for (slot, hash) in entries {
-                data[offset..offset + SLOT_SIZE].copy_from_slice(&slot.to_le_bytes());
-                data[offset + SLOT_SIZE..offset + ENTRY_SIZE].copy_from_slice(hash);
-                offset += ENTRY_SIZE;
-            }
-            data
-        }
 
         #[test]
         fn test_get_entry_count_logic() {
@@ -820,11 +820,13 @@ mod tests {
             assert!(slot_hashes.get_entry(NUM_ENTRIES).is_none());
 
             // Test iterator
-            let mut iter = slot_hashes.into_iter();
-            for i in 0..NUM_ENTRIES {
-                assert_eq!(iter.next().unwrap().slot, mock_entries[i].0);
+            // Use enumerate to avoid clippy lint about indexing
+            for (i, entry) in slot_hashes.into_iter().enumerate() {
+                assert_eq!(entry.slot, mock_entries[i].0);
+                assert_eq!(entry.hash, mock_entries[i].1);
             }
-            assert!(iter.next().is_none());
+            // Check that the iterator is exhausted
+            assert!(slot_hashes.into_iter().nth(NUM_ENTRIES).is_none());
 
             // Test ExactSizeIterator hint
             let mut iter_hint = slot_hashes.into_iter();
@@ -963,11 +965,8 @@ mod tests {
                 // Calling get_entry_from_slice_unchecked with index 0 on empty data is UB, not tested.
             }
         }
-
-        // --- End Tests for Unsafe Static Functions ---
     }
 
-    // --- Copied from benchmark setup for no_std test generation ---
     #[derive(Clone, Copy, Debug)]
     #[allow(dead_code)]
     enum DecrementStrategy {
@@ -975,61 +974,14 @@ mod tests {
         Average1_05,
         Average2,
     }
+
     fn simple_prng(seed: u64) -> u64 {
         const A: u64 = 16807;
         const M: u64 = 2147483647;
         let initial_state = if seed == 0 { 1 } else { seed };
         (A.wrapping_mul(initial_state)) % M
     }
-    fn generate_mock_entries(
-        num_entries: usize,
-        start_slot: u64,
-        strategy: DecrementStrategy,
-    ) -> Vec<(Slot, [u8; 32])> {
-        let mut entries = Vec::with_capacity(num_entries);
-        let mut current_slot = start_slot;
-        for i in 0..num_entries {
-            let hash_byte = (i % 256) as u8;
-            let hash = [hash_byte; 32];
-            entries.push((current_slot, hash));
-            let random_val = simple_prng(i as u64);
-            let decrement = match strategy {
-                DecrementStrategy::Strictly1 => 1,
-                DecrementStrategy::Average1_05 => {
-                    if random_val % 20 == 0 {
-                        2
-                    } else {
-                        1
-                    }
-                }
-                DecrementStrategy::Average2 => {
-                    if random_val % 2 == 0 {
-                        1
-                    } else {
-                        3
-                    }
-                }
-            };
-            current_slot = current_slot.saturating_sub(decrement);
-        }
-        entries
-    }
-    fn create_mock_data_no_std(entries: &[(Slot, [u8; 32])]) -> Vec<u8> {
-        let num_entries = entries.len() as u64;
-        let data_len = NUM_ENTRIES_SIZE + entries.len() * ENTRY_SIZE;
-        let mut data = std::vec![0u8; data_len];
-        data[0..NUM_ENTRIES_SIZE].copy_from_slice(&num_entries.to_le_bytes()); // Now safe to write prefix
-        let mut offset = NUM_ENTRIES_SIZE;
-        for (slot, hash) in entries {
-            data[offset..offset + SLOT_SIZE].copy_from_slice(&slot.to_le_bytes());
-            data[offset + SLOT_SIZE..offset + ENTRY_SIZE].copy_from_slice(hash.as_ref()); // Use AsRef
-            offset += ENTRY_SIZE;
-        }
-        data
-    }
-    // --- End copied helpers ---
 
-    // No-std compatible version of binary search test using arrays
     #[test]
     fn test_binary_search_no_std() {
         const TEST_NUM_ENTRIES: usize = 512;
@@ -1038,7 +990,7 @@ mod tests {
         // Generate entries using Avg1.05 strategy
         let entries =
             generate_mock_entries(TEST_NUM_ENTRIES, START_SLOT, DecrementStrategy::Average1_05);
-        let data = create_mock_data_no_std(&entries);
+        let data = create_mock_data(&entries);
         let entry_count = entries.len();
 
         // Get first, middle, and last generated slots for testing
@@ -1053,7 +1005,6 @@ mod tests {
         // Test the default (interpolation) binary search algorithm
         assert_eq!(slot_hashes.position(first_slot), Some(0));
 
-        // --- Detailed check for mid_slot ---
         let expected_mid_index = Some(mid_index);
         let actual_pos_mid = slot_hashes.position(mid_slot);
         if actual_pos_mid != expected_mid_index {
@@ -1067,7 +1018,7 @@ mod tests {
                 mid_slot, expected_mid_index, actual_pos_mid, surrounding_entries
             );
         }
-        // --- End Detailed check ---
+
         assert_eq!(actual_pos_mid, expected_mid_index); // Re-assert after check/panic
 
         assert_eq!(slot_hashes.position(last_slot), Some(entry_count - 1));
@@ -1086,7 +1037,7 @@ mod tests {
         if let Some(missing_slot) = missing_internal_slot {
             assert_eq!(slot_hashes.position(missing_slot), None);
         } else {
-            // panic! or log if needed: cannot test internal miss without a gap
+            panic!("No internal gap found for testing");
         }
 
         // Test get_hash (interpolation)
@@ -1134,7 +1085,7 @@ mod tests {
 
         // Test empty list explicitly
         let empty_entries = generate_mock_entries(0, START_SLOT, DecrementStrategy::Strictly1);
-        let empty_data = create_mock_data_no_std(&empty_entries);
+        let empty_data = create_mock_data(&empty_entries);
         let empty_hashes = unsafe { SlotHashes::new_unchecked(empty_data.as_slice(), 0) };
         assert_eq!(empty_hashes.get_hash(100), None);
         assert_eq!(empty_hashes.get_hash_midpoint(100), None);
@@ -1157,7 +1108,7 @@ mod tests {
         const NUM_ENTRIES: usize = 5;
         const START_SLOT: u64 = 100;
         let entries = generate_mock_entries(NUM_ENTRIES, START_SLOT, DecrementStrategy::Strictly1);
-        let data = create_mock_data_no_std(&entries);
+        let data = create_mock_data(&entries);
         let slot_hashes = unsafe { SlotHashes::new_unchecked(data.as_slice(), NUM_ENTRIES) };
 
         // Test len() and is_empty()
@@ -1178,13 +1129,13 @@ mod tests {
         assert!(slot_hashes.get_entry(NUM_ENTRIES).is_none()); // Out of bounds
 
         // Test iterator
-        let mut iter = slot_hashes.into_iter();
-        for i in 0..NUM_ENTRIES {
-            let next_entry = iter.next().unwrap();
-            assert_eq!(next_entry.slot, entries[i].0);
-            assert_eq!(next_entry.hash, entries[i].1);
+        // Use enumerate to avoid clippy lint about indexing
+        for (i, entry) in slot_hashes.into_iter().enumerate() {
+            assert_eq!(entry.slot, entries[i].0);
+            assert_eq!(entry.hash, entries[i].1);
         }
-        assert!(iter.next().is_none());
+        // Check that the iterator is exhausted
+        assert!(slot_hashes.into_iter().nth(NUM_ENTRIES).is_none());
 
         // Test ExactSizeIterator hint
         let mut iter_hint = slot_hashes.into_iter();
@@ -1202,7 +1153,7 @@ mod tests {
         assert_eq!(iter_hint.size_hint(), (0, Some(0)));
 
         // Test empty case
-        let empty_data = create_mock_data_no_std(&[]);
+        let empty_data = create_mock_data(&[]);
         let empty_hashes = unsafe { SlotHashes::new_unchecked(empty_data.as_slice(), 0) };
         assert_eq!(empty_hashes.len(), 0);
         assert!(empty_hashes.is_empty());
