@@ -469,9 +469,6 @@ mod tests {
     #[allow(unused_imports)]
     use std::vec::Vec;
 
-    #[cfg(feature = "std")]
-    use std::println;
-
     #[test]
     fn test_layout_constants() {
         assert_eq!(NUM_ENTRIES_SIZE, size_of::<u64>());
