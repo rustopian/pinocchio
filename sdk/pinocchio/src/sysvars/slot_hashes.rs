@@ -97,21 +97,6 @@ where
         Ok((num_entries_usize, required_len))
     }
 
-    /// Validates a byte slice as SlotHashes data and returns the entry count.
-    ///
-    /// This function checks that:
-    /// - The data contains a valid length prefix
-    /// - The data is sufficiently large to hold the indicated number of entries
-    ///
-    /// Returns `ProgramError::AccountDataTooSmall` if the data is too short.
-    /// Returns `ProgramError::InvalidAccountData` if the data length is inconsistent.
-    #[inline(always)]
-    pub fn from_bytes(data: &[u8]) -> Result<usize, ProgramError> {
-        // TODO: unsafe
-        let (num_entries, _) = Self::parse_and_validate_data(data)?;
-        Ok(num_entries)
-    }
-
     /// Gets the number of entries stored in the provided data slice.
     /// Performs validation checks and returns the entry count if valid.
     ///
@@ -294,7 +279,8 @@ impl<'a> SlotHashes<Ref<'a, [u8]>> {
 }
 
 /// Reads the entry count directly from the beginning of a byte slice **without validation**.
-/// (This is identical to the struct method, added here for discoverability with other unchecked fns)
+/// (This is identical to the struct method get_entry_count_unchecked,
+/// added here for discoverability with other unchecked fns)
 ///
 /// # Safety
 ///
@@ -305,7 +291,7 @@ impl<'a> SlotHashes<Ref<'a, [u8]>> {
 /// 3. Calling this function without ensuring the above may lead to panics
 ///    (out-of-bounds access) or incorrect results.
 #[inline(always)]
-pub unsafe fn get_entry_count_unchecked(data: &[u8]) -> usize {
+pub unsafe fn get_entry_count_from_slice_unchecked(data: &[u8]) -> usize {
     // Unsafe access: assumes data has at least NUM_ENTRIES_SIZE bytes.
     let len_bytes: [u8; NUM_ENTRIES_SIZE] = data
         .get_unchecked(0..NUM_ENTRIES_SIZE)
@@ -321,7 +307,7 @@ pub unsafe fn get_entry_count_unchecked(data: &[u8]) -> usize {
 /// Caller must guarantee `data` contains a valid `SlotHashes` structure.
 #[inline(always)]
 pub unsafe fn position_from_slice_unchecked(data: &[u8], target_slot: Slot) -> Option<usize> {
-    let len = get_entry_count_unchecked(data);
+    let len = get_entry_count_from_slice_unchecked(data);
     if len == 0 {
         return None;
     }
@@ -678,28 +664,31 @@ mod tests {
         }
 
         #[test]
-        fn test_from_bytes() {
+        fn test_entry_count() {
             let mock_entries = generate_mock_entries(2, 100, DecrementStrategy::Strictly1);
             let data = create_mock_data(&mock_entries);
 
             // Valid data
-            let count_res = SlotHashes::<&[u8]>::from_bytes(&data);
+            let count_res = SlotHashes::<&[u8]>::get_entry_count(&data);
             assert!(count_res.is_ok());
             assert_eq!(count_res.unwrap(), 2);
 
             // Data too small (less than len prefix)
             let short_data_1 = &data[0..NUM_ENTRIES_SIZE - 1];
-            let res1 = SlotHashes::<&[u8]>::from_bytes(short_data_1);
+            let res1 = SlotHashes::<&[u8]>::get_entry_count(short_data_1);
             assert!(matches!(res1, Err(ProgramError::AccountDataTooSmall)));
 
             // Data too small (correct len prefix, but not enough data for entries)
             let short_data_2 = &data[0..NUM_ENTRIES_SIZE + ENTRY_SIZE]; // Only space for 1 entry
-            let res2 = SlotHashes::<&[u8]>::from_bytes(short_data_2);
+            let res2 = SlotHashes::<&[u8]>::get_entry_count(short_data_2);
             assert!(matches!(res2, Err(ProgramError::InvalidAccountData)));
+            let count_res_unchecked_2 =
+                unsafe { SlotHashes::<&[u8]>::get_entry_count_unchecked(short_data_2) };
+            assert_eq!(count_res_unchecked_2, 2);
 
             // Empty data is valid
             let empty_data = create_mock_data(&[]);
-            let empty_res = SlotHashes::<&[u8]>::from_bytes(&empty_data);
+            let empty_res = SlotHashes::<&[u8]>::get_entry_count(&empty_data);
             assert!(empty_res.is_ok());
             assert_eq!(empty_res.unwrap(), 0);
         }
@@ -735,7 +724,7 @@ mod tests {
             // Safety: We guarantee `data` is valid based on `create_mock_data`
             unsafe {
                 // Test get_entry_count_unchecked (already tested elsewhere, but confirm here)
-                assert_eq!(get_entry_count_unchecked(&data), NUM_ENTRIES);
+                assert_eq!(get_entry_count_from_slice_unchecked(&data), NUM_ENTRIES);
 
                 // Test position_from_slice_unchecked
                 assert_eq!(position_from_slice_unchecked(&data, first_slot), Some(0));
@@ -784,7 +773,7 @@ mod tests {
             // Test empty case for unchecked functions
             let empty_data = create_mock_data(&[]);
             unsafe {
-                assert_eq!(get_entry_count_unchecked(&empty_data), 0);
+                assert_eq!(get_entry_count_from_slice_unchecked(&empty_data), 0);
                 assert_eq!(position_from_slice_unchecked(&empty_data, 100), None);
                 assert_eq!(get_hash_from_slice_unchecked(&empty_data, 100), None);
                 // Calling get_entry_from_slice_unchecked with index 0 on empty data is UB, not tested.
@@ -945,7 +934,7 @@ mod tests {
     }
 
     #[test]
-    fn test_from_bytes_no_std() {
+    fn test_get_entry_count_no_std() {
         // Valid data (2 entries)
         let entries: &[(Slot, [u8; HASH_BYTES])] =
             &[(100, [1u8; HASH_BYTES]), (98, [2u8; HASH_BYTES])];
@@ -961,28 +950,36 @@ mod tests {
             cursor += HASH_BYTES;
         }
         let data_slice = &raw_data[..cursor];
-        let count_res = SlotHashes::<&[u8]>::from_bytes(data_slice);
+        let count_res = SlotHashes::<&[u8]>::get_entry_count(data_slice);
         assert!(count_res.is_ok());
         assert_eq!(count_res.unwrap(), 2);
+        let count_res_unchecked =
+            unsafe { SlotHashes::<&[u8]>::get_entry_count_unchecked(data_slice) };
+        assert_eq!(count_res_unchecked, 2);
 
         // Data too small (less than len prefix)
         let short_data_1 = &data_slice[0..NUM_ENTRIES_SIZE - 1];
-        let res1 = SlotHashes::<&[u8]>::from_bytes(short_data_1);
+        let res1 = SlotHashes::<&[u8]>::get_entry_count(short_data_1);
         assert!(matches!(res1, Err(ProgramError::AccountDataTooSmall)));
 
         // Data too small (correct len prefix, but not enough data for entries)
-        // Use the same raw_data but slice it to be too short
         let short_data_2 = &data_slice[0..NUM_ENTRIES_SIZE + ENTRY_SIZE]; // Only space for 1 entry
-        let res2 = SlotHashes::<&[u8]>::from_bytes(short_data_2);
+        let res2 = SlotHashes::<&[u8]>::get_entry_count(short_data_2);
         assert!(matches!(res2, Err(ProgramError::InvalidAccountData)));
+        let count_res_unchecked_2 =
+            unsafe { SlotHashes::<&[u8]>::get_entry_count_unchecked(short_data_2) };
+        assert_eq!(count_res_unchecked_2, 2);
 
         // Empty data is valid
         let empty_num_bytes = (0u64).to_le_bytes();
         let mut empty_raw_data = [0u8; NUM_ENTRIES_SIZE];
         empty_raw_data[..NUM_ENTRIES_SIZE].copy_from_slice(&empty_num_bytes);
-        let empty_res = SlotHashes::<&[u8]>::from_bytes(empty_raw_data.as_slice());
+        let empty_res = SlotHashes::<&[u8]>::get_entry_count(empty_raw_data.as_slice());
         assert!(empty_res.is_ok());
         assert_eq!(empty_res.unwrap(), 0);
+        let empty_res_unchecked =
+            unsafe { SlotHashes::<&[u8]>::get_entry_count_unchecked(empty_raw_data.as_slice()) };
+        assert_eq!(empty_res_unchecked, 0);
     }
 
     #[test]
