@@ -170,7 +170,7 @@ where
         }
 
         let start = NUM_ENTRIES_SIZE + index * ENTRY_SIZE;
-        let end   = start + ENTRY_SIZE;
+        let end = start + ENTRY_SIZE;
 
         // Safety bounds check
         let entry_bytes = self.data.get(start..end)?;
@@ -406,15 +406,6 @@ pub unsafe fn get_entry_from_slice_unchecked(data: &[u8], index: usize) -> &Slot
     &*(entry_bytes.as_ptr() as *const SlotHashEntry)
 }
 
-// Note: This implementation does *not* implement the `Sysvar` trait from
-// `solana_program::sysvar`. That trait typically requires deserialization
-// (e.g., via `borsh` or `serde`), which is explicitly avoided here for efficiency
-// and to handle the large size of `SlotHashes`. Instead, use `SlotHashes::from_account_info`
-// (for the safe, borrow-checked version) or `AccountInfo::borrow_data_unchecked`,
-// `SlotHashes::get_entry_count_unchecked`, and `SlotHashes::new_unchecked` (for the
-// maximally performant, unsafe version). Linear iteration is available via the
-// standard `Iterator` trait implementation.
-
 /// Iterator over the entries in `SlotHashes`.
 ///
 /// Yields references `&'s SlotHashEntry` tied to the lifetime `'s` of the borrow
@@ -428,6 +419,7 @@ where
 }
 
 // Implement Iterator trait for the custom iterator struct
+// TODO: trait extension for unchecked Iterator::next()
 impl<'s, T> Iterator for SlotHashesIterator<'s, T>
 where
     T: Deref<Target = [u8]>,
@@ -435,7 +427,7 @@ where
     type Item = &'s SlotHashEntry;
 
     fn next(&mut self) -> Option<Self::Item> {
-        // Use the safe get_entry method from SlotHashes
+        // Use safe get_entry method from SlotHashes
         let entry = self.slot_hashes.get_entry(self.current_index);
         if entry.is_some() {
             self.current_index += 1;
@@ -443,7 +435,6 @@ where
         entry
     }
 
-    // Provide size hint for potential optimizations
     fn size_hint(&self) -> (usize, Option<usize>) {
         let remaining = self.slot_hashes.len().saturating_sub(self.current_index);
         (remaining, Some(remaining))
@@ -481,7 +472,6 @@ mod tests {
     #[cfg(feature = "std")]
     use std::println;
 
-    // Test the layout constants (works in both std and no_std)
     #[test]
     fn test_layout_constants() {
         assert_eq!(NUM_ENTRIES_SIZE, size_of::<u64>());
@@ -492,7 +482,6 @@ mod tests {
         assert_eq!(align_of::<SlotHashEntry>(), align_of::<u64>());
     }
 
-    // Helper function create mock data buffer (used by std and no_std tests)
     fn create_mock_data(entries: &[(u64, [u8; 32])]) -> Vec<u8> {
         let num_entries = entries.len() as u64;
         let data_len = NUM_ENTRIES_SIZE + entries.len() * ENTRY_SIZE;
@@ -507,7 +496,6 @@ mod tests {
         data
     }
 
-    // Helper function to generate mock SlotHashes entries for tests
     fn generate_mock_entries(
         num_entries: usize,
         start_slot: u64,
@@ -543,7 +531,6 @@ mod tests {
         entries
     }
 
-    // Tests requiring std (Vec, allocation)
     #[cfg(feature = "std")]
     mod std_tests {
         use super::*;
@@ -554,7 +541,7 @@ mod tests {
             let data = create_mock_data(&mock_entries);
 
             // Test the safe count getter
-            let result = SlotHashes::<&[u8]>::get_entry_count(&data); // Specify type for assoc fn
+            let result = SlotHashes::<&[u8]>::get_entry_count(&data);
             assert!(result.is_ok());
             let len = result.unwrap();
             assert_eq!(len, 3);
@@ -583,8 +570,8 @@ mod tests {
 
         #[test]
         fn test_binary_search_and_linear() {
-            const NUM_ENTRIES: usize = 10;
-            const START_SLOT: u64 = 100;
+            const NUM_ENTRIES: usize = 512;
+            const START_SLOT: u64 = 2000;
             let mock_entries =
                 generate_mock_entries(NUM_ENTRIES, START_SLOT, DecrementStrategy::Average1_05);
             let mock_data = create_mock_data(&mock_entries);
@@ -595,28 +582,30 @@ mod tests {
             let last_slot = mock_entries[NUM_ENTRIES - 1].0;
             let mid_slot = mock_entries[NUM_ENTRIES / 2].0;
 
-            // Test binary search position
+            // Test position
             assert_eq!(slot_hashes.position(first_slot), Some(0));
             assert_eq!(slot_hashes.position(mid_slot), Some(NUM_ENTRIES / 2));
             assert_eq!(slot_hashes.position(last_slot), Some(NUM_ENTRIES - 1));
 
-            // Find an actual gap to test a guaranteed non-existent internal slot
-            let mut missing_internal_slot = None;
-            for i in 0..(mock_entries.len() - 1) {
-                if mock_entries[i].0 > mock_entries[i + 1].0 + 1 {
-                    missing_internal_slot = Some(mock_entries[i + 1].0 + 1);
-                    break;
-                }
-            }
-            if let Some(missing_slot) = missing_internal_slot {
-                assert_eq!(slot_hashes.position(missing_slot), None); // Test interpolation search miss
-            } else {
-                // This shouldn't happen with Avg1.05 or Avg2, but handle case
-                println!("[WARN] Could not find internal gap for missing slot test in std_tests");
-            }
-            assert_eq!(slot_hashes.position(last_slot.saturating_sub(1)), None); // Test near end (usually none)
+            // Find a gap between consecutive slots to test non-existent slot search
+            let missing_internal_slot = (0..mock_entries.len() - 1)
+                .find(|&i| mock_entries[i].0 > mock_entries[i + 1].0 + 1)
+                .map(|i| mock_entries[i + 1].0 + 1);
 
-            // Test binary search get_hash
+            assert!(
+                missing_internal_slot.is_some(),
+                "Average1_05 strategy should create gaps between slots"
+            );
+            assert_eq!(
+                slot_hashes.position(missing_internal_slot.unwrap()),
+                None,
+                "Search should fail for slot {} between {} and {}",
+                missing_internal_slot.unwrap(),
+                mock_entries[0].0,
+                mock_entries[mock_entries.len() - 1].0
+            );
+
+            // Test get_hash
             assert_eq!(slot_hashes.get_hash(first_slot), Some(&mock_entries[0].1));
             assert_eq!(
                 slot_hashes.get_hash(mid_slot),
@@ -632,8 +621,8 @@ mod tests {
 
         #[test]
         fn test_basic_getters_and_iterator() {
-            const NUM_ENTRIES: usize = 5;
-            const START_SLOT: u64 = 100;
+            const NUM_ENTRIES: usize = 512;
+            const START_SLOT: u64 = 2000;
             let mock_entries =
                 generate_mock_entries(NUM_ENTRIES, START_SLOT, DecrementStrategy::Strictly1);
             let data = create_mock_data(&mock_entries);
@@ -733,8 +722,8 @@ mod tests {
 
         #[test]
         fn test_unchecked_static_functions() {
-            const NUM_ENTRIES: usize = 10;
-            const START_SLOT: u64 = 100;
+            const NUM_ENTRIES: usize = 512;
+            const START_SLOT: u64 = 2000;
             let mock_entries =
                 generate_mock_entries(NUM_ENTRIES, START_SLOT, DecrementStrategy::Average1_05);
             let data = create_mock_data(&mock_entries);
@@ -814,6 +803,7 @@ mod tests {
         Average2,
     }
 
+    // Stand-in for proper fuzz (todo)
     fn simple_prng(seed: u64) -> u64 {
         const A: u64 = 16807;
         const M: u64 = 2147483647;
@@ -846,19 +836,16 @@ mod tests {
 
         let expected_mid_index = Some(mid_index);
         let actual_pos_mid = slot_hashes.position(mid_slot);
-        if actual_pos_mid != expected_mid_index {
-            // Extract surrounding entries for context
-            let start_idx = mid_index.saturating_sub(2);
-            let end_idx = core::cmp::min(entry_count, mid_index.saturating_add(3));
-            let surrounding_entries: std::vec::Vec<_> =
-                entries[start_idx..end_idx].iter().map(|e| e.0).collect(); // Use std::vec! here
-            panic!(
-                "Assertion `position({}) == {:?}` failed! Actual: {:?}. Surrounding slots: {:?}",
-                mid_slot, expected_mid_index, actual_pos_mid, surrounding_entries
-            );
-        }
 
-        assert_eq!(actual_pos_mid, expected_mid_index); // Re-assert after check/panic
+        // Extract surrounding entries for context in case of failure
+        let start_idx = mid_index.saturating_sub(2);
+        let end_idx = core::cmp::min(entry_count, mid_index.saturating_add(3));
+        let surrounding_slots: Vec<_> = entries[start_idx..end_idx].iter().map(|e| e.0).collect();
+        assert_eq!(
+            actual_pos_mid, expected_mid_index,
+            "position({}) failed! Surrounding slots: {:?}",
+            mid_slot, surrounding_slots
+        );
 
         assert_eq!(slot_hashes.position(last_slot), Some(entry_count - 1));
 
@@ -873,11 +860,11 @@ mod tests {
                 break;
             }
         }
-        if let Some(missing_slot) = missing_internal_slot {
-            assert_eq!(slot_hashes.position(missing_slot), None);
-        } else {
-            panic!("No internal gap found for testing");
-        }
+        assert!(
+            missing_internal_slot.is_some(),
+            "Test requires at least one gap between slots"
+        );
+        assert_eq!(slot_hashes.position(missing_internal_slot.unwrap()), None);
 
         // Test get_hash (interpolation)
         assert_eq!(slot_hashes.get_hash(first_slot), Some(&entries[0].1));
@@ -895,20 +882,17 @@ mod tests {
         assert_eq!(empty_hashes.get_hash(100), None);
 
         let pos_start_plus_1 = slot_hashes.position(START_SLOT + 1);
-        if pos_start_plus_1.is_some() {
-            panic!(
-                "Assertion `position(START_SLOT + 1) == None` failed! mid_slot={}, Found: {:?}",
-                mid_slot, pos_start_plus_1
-            );
-        }
-        assert_eq!(pos_start_plus_1, None);
+        assert!(
+            pos_start_plus_1.is_none(),
+            "position(START_SLOT + 1) should be None"
+        );
     }
 
     // No-std compatible tests
     #[test]
     fn test_basic_getters_and_iterator_no_std() {
-        const NUM_ENTRIES: usize = 5;
-        const START_SLOT: u64 = 100;
+        const NUM_ENTRIES: usize = 512;
+        const START_SLOT: u64 = 2000;
         let entries = generate_mock_entries(NUM_ENTRIES, START_SLOT, DecrementStrategy::Strictly1);
         let data = create_mock_data(&entries);
         let slot_hashes = unsafe { SlotHashes::new_unchecked(data.as_slice(), NUM_ENTRIES) };
