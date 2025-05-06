@@ -162,44 +162,31 @@ where
     }
 
     /// Gets a reference to the `SlotHashEntry` at the specified index.
-    ///
     /// Returns `None` if the index is out of bounds.
     #[inline(always)]
     pub fn get_entry(&self, index: usize) -> Option<&SlotHashEntry> {
         if index >= self.len {
             return None;
         }
-        let full_data_slice: &[u8] = &self.data;
-        let entries_data = unsafe { full_data_slice.get_unchecked(NUM_ENTRIES_SIZE..) };
 
-        // Calculate offsets within the entries_data slice
-        let start = index.checked_mul(ENTRY_SIZE)?;
-        let end = start.checked_add(ENTRY_SIZE)?;
+        let start = NUM_ENTRIES_SIZE + index * ENTRY_SIZE;
+        let end   = start + ENTRY_SIZE;
 
-        let entry_bytes = entries_data.get(start..end)?;
-
-        // Safety: Relies on constructor/new_unchecked checks, repr(C), and alignment.
+        // Safety bounds check
+        let entry_bytes = self.data.get(start..end)?;
+        // Safety: constructor guarantees data layout & alignment
         Some(unsafe { &*(entry_bytes.as_ptr() as *const SlotHashEntry) })
     }
 
-    /// Gets a reference to the `SlotHashEntry` at the specified index without bounds checking.
+    /// Gets a reference without bounds checking.
     ///
     /// # Safety
-    ///
-    /// This function is unsafe because it does not verify if the index is out of bounds.
-    /// The caller must ensure that `index < self.len()`.
-    ///
-    /// This function is typically used in performance-critical code paths where
-    /// the index has already been validated, such as within `binary_search_slot`.
+    /// Caller must ensure `index < self.len()`.
     #[inline(always)]
     pub unsafe fn get_entry_unchecked(&self, index: usize) -> &SlotHashEntry {
-        let full_data_slice: &[u8] = &self.data;
-        let entries_data = full_data_slice.get_unchecked(NUM_ENTRIES_SIZE..);
-
-        let offset = index * ENTRY_SIZE;
-        let entry_bytes = entries_data.get_unchecked(offset..(offset + ENTRY_SIZE));
-
-        &*(entry_bytes.as_ptr() as *const SlotHashEntry)
+        debug_assert!(index < self.len);
+        let offset = NUM_ENTRIES_SIZE + index * ENTRY_SIZE;
+        &*(self.data.as_ptr().add(offset) as *const SlotHashEntry)
     }
 
     /// Performs a binary search to find an entry with the given slot number.
@@ -907,7 +894,6 @@ mod tests {
         let empty_hashes = unsafe { SlotHashes::new_unchecked(empty_data.as_slice(), 0) };
         assert_eq!(empty_hashes.get_hash(100), None);
 
-        // --- Add Panic for failing assertion to see context ---
         let pos_start_plus_1 = slot_hashes.position(START_SLOT + 1);
         if pos_start_plus_1.is_some() {
             panic!(
@@ -915,7 +901,6 @@ mod tests {
                 mid_slot, pos_start_plus_1
             );
         }
-        // --- End Panic ---
         assert_eq!(pos_start_plus_1, None);
     }
 
