@@ -436,18 +436,14 @@ where
         match entry_slot.cmp(&target_slot) {
             core::cmp::Ordering::Equal => return Some(probe_idx),
             core::cmp::Ordering::Greater => {
-                // entry_slot at probe_idx is > target_slot. Target is further down (higher index).
-                let slot_diff = entry_slot - target_slot;
-                let max_possible_index_for_target = probe_idx.saturating_add(slot_diff as usize);
+                // entry_slot > target_slot. Target is at a higher index.
+                // Standard binary search update:
                 low = probe_idx + 1;
-                high = high.min(max_possible_index_for_target.saturating_add(1));
             }
             core::cmp::Ordering::Less => {
-                // entry_slot at probe_idx is < target_slot. Target is further up (lower index).
-                let slot_diff = target_slot - entry_slot;
-                let min_possible_index_for_target = probe_idx.saturating_sub(slot_diff as usize);
+                // entry_slot < target_slot. Target is at a lower index.
+                // Standard binary search update:
                 high = probe_idx;
-                low = low.max(min_possible_index_for_target);
             }
         }
         if low >= high {
