@@ -176,45 +176,40 @@ where
     /// When we find a slot at an index, we can calculate minimum bounds based on
     /// the minimum gap, and use typical gaps as a heuristic for probing.
     #[inline(always)]
-    fn interpolated_binary_search_slot(&self, target_slot: Slot) -> Option<usize> {
+    fn binary_search_slot(&self, target_slot: Slot) -> Option<usize> {
         // Safety: self.len is trusted. get_entry_unchecked is safe if index < self.len.
-        // The core_interpolated_search logic respects num_entries (self.len here) for bounds.
+        // The core_binary_search logic respects num_entries (self.len here) for bounds.
         unsafe {
-            core_interpolated_search(
+            // Pass dummy closure for get_first_slot
+            core_binary_search(
                 target_slot,
                 self.len,
-                || {
-                    // Assumes self.len > 0, which core_interpolated_search checks via num_entries.
-                    // If self.len is 0, this closure won't be called.
-                    self.get_entry_unchecked(0).slot
-                },
-                |idx| {
-                    // The index `idx` comes from core_interpolated_search's `probe_idx`,
-                    // which is clamped to be `< num_entries` (i.e., `< self.len`).
+                || Slot::MAX, // Dummy closure, value unused
+                |idx| { 
                     self.get_entry_unchecked(idx).slot
                 },
             )
         }
     }
 
-    /// Finds the hash for a specific slot using domain-aware binary search.
+    /// Finds the hash for a specific slot using binary search.
     ///
     /// Returns the hash if the slot is found, or `None` if not found.
     /// Assumes entries are sorted by slot in descending order.
     #[inline(always)]
     pub fn get_hash(&self, target_slot: Slot) -> Option<&[u8; HASH_BYTES]> {
-        self.interpolated_binary_search_slot(target_slot)
+        self.binary_search_slot(target_slot) // Updated caller
             .and_then(|idx| self.get_entry(idx))
             .map(|entry| &entry.hash)
     }
 
-    /// Finds the position (index) of a specific slot using domain-aware binary search.
+    /// Finds the position (index) of a specific slot using binary search.
     ///
     /// Returns the index if the slot is found, or `None` if not found.
     /// Assumes entries are sorted by slot in descending order.
     #[inline(always)]
     pub fn position(&self, target_slot: Slot) -> Option<usize> {
-        self.interpolated_binary_search_slot(target_slot)
+        self.binary_search_slot(target_slot) // Updated caller
     }
 }
 
@@ -269,36 +264,27 @@ pub unsafe fn get_entry_count_from_slice_unchecked(data: &[u8]) -> usize {
     num_entries as usize
 }
 
-/// Performs an **unsafe** interpolation binary search directly on a raw byte slice.
+/// Performs an **unsafe** naive binary search directly on a raw byte slice.
 ///
 /// # Safety
 /// Caller must guarantee `data` contains a valid `SlotHashes` structure and that
 /// `num_entries` is the correct count of entries in `data`. It is up to caller whether
 /// to use MAX_ENTRIES or to use a call such as `get_entry_count_from_slice_unchecked`
 #[inline(always)]
-pub unsafe fn position_from_slice_unchecked(
+pub unsafe fn position_from_slice_binary_search_unchecked(
     data: &[u8],
     target_slot: Slot,
     num_entries: usize,
 ) -> Option<usize> {
     // Safety: Caller guarantees num_entries and data validity.
     // Closures perform unchecked access, relying on these guarantees and
-    // on core_interpolated_search respecting num_entries for bounds.
-    core_interpolated_search(
+    // on core_binary_search respecting num_entries for bounds.
+    // Pass dummy closure for get_first_slot
+    core_binary_search(
         target_slot,
         num_entries,
-        || {
-            // Assumes num_entries > 0, which core_interpolated_search checks.
-            // If num_entries is 0, this closure won't be called.
-            u64::from_le_bytes(
-                data.get_unchecked(NUM_ENTRIES_SIZE..NUM_ENTRIES_SIZE + SLOT_SIZE)
-                    .try_into()
-                    .unwrap_unchecked(),
-            )
-        },
-        |idx| {
-            // The index `idx` comes from core_interpolated_search's `probe_idx`,
-            // which is clamped to be `< num_entries`.
+        || Slot::MAX, // Dummy closure, value unused
+        |idx| { 
             let entry_offset = NUM_ENTRIES_SIZE + idx * ENTRY_SIZE;
             let entry_bytes = data.get_unchecked(entry_offset..(entry_offset + ENTRY_SIZE));
             u64::from_le_bytes(
@@ -323,7 +309,7 @@ pub unsafe fn get_hash_from_slice_unchecked(
     target_slot: Slot,
     num_entries: usize,
 ) -> Option<&[u8; HASH_BYTES]> {
-    position_from_slice_unchecked(data, target_slot, num_entries).map(|index| {
+    position_from_slice_binary_search_unchecked(data, target_slot, num_entries).map(|index| {
         let entry_offset = NUM_ENTRIES_SIZE + index * ENTRY_SIZE;
         let hash_offset = entry_offset + SLOT_SIZE;
         let hash_bytes = data.get_unchecked(hash_offset..(hash_offset + HASH_BYTES));
@@ -398,10 +384,10 @@ where
 }
 
 #[inline(always)]
-unsafe fn core_interpolated_search<FFirstSlot, FSlotAtIndex>(
+unsafe fn core_binary_search<FFirstSlot, FSlotAtIndex>(
     target_slot: Slot,
     num_entries: usize,
-    get_first_slot: FFirstSlot,
+    _get_first_slot: FFirstSlot,
     get_slot_at_index: FSlotAtIndex,
 ) -> Option<usize>
 where
@@ -411,48 +397,24 @@ where
     if num_entries == 0 {
         return None;
     }
-    let first_slot = get_first_slot();
-    if target_slot > first_slot {
-        return None;
-    }
-    if target_slot == first_slot {
-        return Some(0);
-    }
 
     let mut low = 0;
     let mut high = num_entries;
 
-    // --- First Probe using Interpolation ---
-    let initial_delta_slots = first_slot.saturating_sub(target_slot);
-    let initial_estimated_index = ((initial_delta_slots.saturating_mul(19)) / 20) as usize;
-    let first_probe_idx = initial_estimated_index.clamp(low, high.saturating_sub(1));
-    let first_entry_slot = get_slot_at_index(first_probe_idx);
-
-    match first_entry_slot.cmp(&target_slot) {
-        core::cmp::Ordering::Equal => return Some(first_probe_idx),
-        core::cmp::Ordering::Greater => { // first_entry_slot > target_slot
-            low = first_probe_idx + 1;
-        }
-        core::cmp::Ordering::Less => { // first_entry_slot < target_slot
-            high = first_probe_idx;
-        }
-    }
-    // --- End First Probe --- 
-
-    // --- Subsequent Probes using Naive Binary Search ---
+    // Standard Naive Binary Search Loop
     while low < high {
         let mid_idx = low + (high - low) / 2; // Naive midpoint
         let entry_slot = get_slot_at_index(mid_idx);
 
         match entry_slot.cmp(&target_slot) {
             core::cmp::Ordering::Equal => return Some(mid_idx),
-            core::cmp::Ordering::Greater => low = mid_idx + 1, // Standard update
-            core::cmp::Ordering::Less => high = mid_idx,      // Standard update
+            // Remember: SlotHashes are stored in descending order
+            core::cmp::Ordering::Less => high = mid_idx,      // entry_slot < target_slot => Target is in lower indices (left half)
+            core::cmp::Ordering::Greater => low = mid_idx + 1, // entry_slot > target_slot => Target is in higher indices (right half)
         }
     }
-    // --- End Naive Search ---
 
-    None // Not found after combining strategies
+    None // Not found
 }
 
 #[cfg(test)]
@@ -774,25 +736,25 @@ mod tests {
                 // Test get_entry_count_unchecked (already tested elsewhere, but confirm here)
                 assert_eq!(get_entry_count_from_slice_unchecked(&data), NUM_ENTRIES);
 
-                // Test position_from_slice_unchecked
+                // Test position_from_slice_binary_search_unchecked
                 assert_eq!(
-                    position_from_slice_unchecked(&data, first_slot, NUM_ENTRIES),
+                    position_from_slice_binary_search_unchecked(&data, first_slot, NUM_ENTRIES),
                     Some(0)
                 );
                 assert_eq!(
-                    position_from_slice_unchecked(&data, mid_slot, NUM_ENTRIES),
+                    position_from_slice_binary_search_unchecked(&data, mid_slot, NUM_ENTRIES),
                     Some(mid_index)
                 );
                 assert_eq!(
-                    position_from_slice_unchecked(&data, last_slot, NUM_ENTRIES),
+                    position_from_slice_binary_search_unchecked(&data, last_slot, NUM_ENTRIES),
                     Some(NUM_ENTRIES - 1)
                 );
                 assert_eq!(
-                    position_from_slice_unchecked(&data, missing_slot_high, NUM_ENTRIES),
+                    position_from_slice_binary_search_unchecked(&data, missing_slot_high, NUM_ENTRIES),
                     None
                 );
                 assert_eq!(
-                    position_from_slice_unchecked(&data, missing_slot_low, NUM_ENTRIES),
+                    position_from_slice_binary_search_unchecked(&data, missing_slot_low, NUM_ENTRIES),
                     None
                 );
 
@@ -831,7 +793,7 @@ mod tests {
             let empty_data = create_mock_data(&[]);
             unsafe {
                 assert_eq!(get_entry_count_from_slice_unchecked(&empty_data), 0);
-                assert_eq!(position_from_slice_unchecked(&empty_data, 100, 0), None);
+                assert_eq!(position_from_slice_binary_search_unchecked(&empty_data, 100, 0), None);
                 assert_eq!(get_hash_from_slice_unchecked(&empty_data, 100, 0), None);
                 // Calling get_entry_from_slice_unchecked with index 0 on empty data is UB, not tested.
             }
