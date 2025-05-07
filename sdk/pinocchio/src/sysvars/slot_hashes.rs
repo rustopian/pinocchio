@@ -480,10 +480,38 @@ mod tests {
                 197, 41, 208, 190, 59, 19, 110, 45, 0, 85, 32, 0, 0, 0,
             ]
         );
-        let slothashes_base58 = bs58::encode(&SLOTHASHES_ID).into_string();
-        assert_eq!(
-            slothashes_base58,
-            "SysvarS1otHashes111111111111111111111111111"
+        const BASE_58: &[u8; 58] = b"123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+        // quick base58 comparison just for test
+        pub fn check_base58(input_bytes: &[u8], expected_b58: &str) {
+            let mut b58_digits_rev = std::vec![0u8];
+            for &byte_val in input_bytes {
+                let mut carry = byte_val as u32;
+                for digit_ref in b58_digits_rev.iter_mut() {
+                    let temp_val = ((*digit_ref as u32) << 8) | carry;
+                    *digit_ref = (temp_val % 58) as u8;
+                    carry = temp_val / 58;
+                }
+                while carry > 0 {
+                    b58_digits_rev.push((carry % 58) as u8);
+                    carry /= 58;
+                }
+            }
+            for &byte_val in input_bytes {
+                if byte_val == 0 {
+                    b58_digits_rev.push(0)
+                } else {
+                    break;
+                }
+            }
+            let mut output_chars = Vec::with_capacity(b58_digits_rev.len());
+            for &digit_val in b58_digits_rev.iter().rev() {
+                output_chars.push(BASE_58[digit_val as usize]);
+            }
+            assert_eq!(expected_b58.as_bytes(), output_chars.as_slice());
+        }
+        check_base58(
+            &SLOTHASHES_ID,
+            "SysvarS1otHashes111111111111111111111111111",
         );
     }
 
@@ -491,7 +519,7 @@ mod tests {
         let num_entries = entries.len() as u64;
         let data_len = NUM_ENTRIES_SIZE + entries.len() * ENTRY_SIZE;
         let mut data = std::vec![0u8; data_len];
-        data[0..NUM_ENTRIES_SIZE].copy_from_slice(&num_entries.to_le_bytes()); // Now safe to write prefix
+        data[0..NUM_ENTRIES_SIZE].copy_from_slice(&num_entries.to_le_bytes());
         let mut offset = NUM_ENTRIES_SIZE;
         for (slot, hash) in entries {
             data[offset..offset + SLOT_SIZE].copy_from_slice(&slot.to_le_bytes());
