@@ -1,9 +1,4 @@
-//! Efficient, zero-copy access to the SlotHashes sysvar.
-//!
-//! This module provides a way to access the SlotHashes sysvar data
-//! directly from account data without requiring full deserialization or
-//! relying on potentially inefficient syscalls for individual entries.
-//! No impl_sysvar_get! since the data is too huge.
+//! Efficient, zero-copy access to SlotHashes sysvar data.
 
 use crate::{
     account_info::{AccountInfo, Ref},
@@ -48,7 +43,7 @@ where
     T: Deref<Target = [u8]>,
 {
     data: T,
-    len: usize, // TODO: check whether we can just assume total len
+    len: usize,
 }
 
 impl<T> SlotHashes<T>
@@ -56,6 +51,8 @@ where
     T: Deref<Target = [u8]>,
 {
     /// Creates a `SlotHashes` instance directly from a data container and entry count.
+    /// Important: provide a valid len. Whether or not len is assumed to be
+    /// the constant 20_488 (512 entries) is up to caller.
     ///
     /// # Safety
     ///
@@ -65,8 +62,9 @@ where
     ///    (length prefix + entries).
     /// 2. `len` is the correct number of entries (≤ MAX_ENTRIES), matching the prefix.
     /// 3. The data slice contains at least `NUM_ENTRIES_SIZE + len * ENTRY_SIZE` bytes.
-    /// 4. If `T` is `&[u8]`, the caller must ensure borrow rules are upheld.
+    /// 4. If `T` is `&[u8]`, that borrow rules are upheld.
     /// 5. Alignment is correct.
+    ///
     #[inline(always)]
     pub unsafe fn new_unchecked(data: T, len: usize) -> Self {
         SlotHashes { data, len }
@@ -103,14 +101,11 @@ where
     /// Useful for testing or when only the entry count is needed.
     #[inline(always)]
     pub fn get_entry_count(data: &[u8]) -> Result<usize, ProgramError> {
-        // TODO: use unsafe
         let (num_entries, _) = Self::parse_and_validate_data(data)?;
         Ok(num_entries)
     }
 
     /// Reads the entry count directly from the beginning of a byte slice **without validation**.
-    ///
-    /// This function caps the read count at `MAX_ENTRIES`.
     ///
     /// # Safety
     ///
@@ -120,9 +115,6 @@ where
     /// 2. The first 8 bytes represent a valid `u64` in little-endian format.
     /// 3. Calling this function without ensuring the above may lead to panics
     ///    (out-of-bounds access) or incorrect results.
-    ///
-    /// This is intended for extreme performance scenarios where the data slice validity
-    /// is guaranteed by external means.
     #[inline(always)]
     pub unsafe fn get_entry_count_unchecked(data: &[u8]) -> usize {
         // Unsafe access: assumes data has at least NUM_ENTRIES_SIZE bytes.
@@ -131,7 +123,7 @@ where
             .try_into()
             .unwrap_unchecked();
         let num_entries = u64::from_le_bytes(len_bytes);
-        (num_entries as usize).min(MAX_ENTRIES) // Cap at MAX_ENTRIES
+        num_entries as usize
     }
 
     /// Returns the number of `SlotHashEntry` items accessible.
@@ -185,48 +177,24 @@ where
     /// the minimum gap, and use typical gaps as a heuristic for probing.
     #[inline(always)]
     fn interpolated_binary_search_slot(&self, target_slot: Slot) -> Option<usize> {
-        let len = self.len;
-        if len == 0 {
-            return None;
+        // Safety: self.len is trusted. get_entry_unchecked is safe if index < self.len.
+        // The core_interpolated_search logic respects num_entries (self.len here) for bounds.
+        unsafe {
+            core_interpolated_search(
+                target_slot,
+                self.len,
+                || {
+                    // Assumes self.len > 0, which core_interpolated_search checks via num_entries.
+                    // If self.len is 0, this closure won't be called.
+                    self.get_entry_unchecked(0).slot
+                },
+                |idx| {
+                    // The index `idx` comes from core_interpolated_search's `probe_idx`,
+                    // which is clamped to be `< num_entries` (i.e., `< self.len`).
+                    self.get_entry_unchecked(idx).slot
+                },
+            )
         }
-        let first_slot = unsafe { self.get_entry_unchecked(0).slot };
-        if target_slot > first_slot {
-            return None;
-        }
-        if target_slot == first_slot {
-            return Some(0);
-        }
-
-        let mut low = 0;
-        let mut high = len;
-
-        while low < high {
-            let delta_slots = first_slot.saturating_sub(target_slot);
-            let estimated_index = ((delta_slots.saturating_mul(19)) / 20) as usize;
-            let mid = estimated_index.clamp(low, high.saturating_sub(1));
-            let entry_slot = unsafe { self.get_entry_unchecked(mid).slot };
-
-            match entry_slot.cmp(&target_slot) {
-                core::cmp::Ordering::Equal => return Some(mid),
-                core::cmp::Ordering::Greater => {
-                    let slot_diff = entry_slot - target_slot;
-                    let max_possible_index = mid.saturating_add(slot_diff as usize);
-                    low = mid + 1;
-                    high = high.min(max_possible_index.saturating_add(1));
-                }
-                core::cmp::Ordering::Less => {
-                    let slot_diff = target_slot - entry_slot;
-                    let min_possible_index = mid.saturating_sub(slot_diff as usize);
-                    high = mid;
-                    low = low.max(min_possible_index);
-                }
-            }
-            // Check if bounds crossed after update
-            if low >= high {
-                break;
-            }
-        }
-        None // Not found
     }
 
     /// Finds the hash for a specific slot using domain-aware binary search.
@@ -292,88 +260,70 @@ impl<'a> SlotHashes<Ref<'a, [u8]>> {
 ///    (out-of-bounds access) or incorrect results.
 #[inline(always)]
 pub unsafe fn get_entry_count_from_slice_unchecked(data: &[u8]) -> usize {
-    // Unsafe access: assumes data has at least NUM_ENTRIES_SIZE bytes.
+    // Safety: assumes data has at least NUM_ENTRIES_SIZE bytes.
     let len_bytes: [u8; NUM_ENTRIES_SIZE] = data
         .get_unchecked(0..NUM_ENTRIES_SIZE)
         .try_into()
         .unwrap_unchecked();
     let num_entries = u64::from_le_bytes(len_bytes);
-    (num_entries as usize).min(MAX_ENTRIES) // Cap at MAX_ENTRIES
+    num_entries as usize
 }
 
 /// Performs an **unsafe** interpolation binary search directly on a raw byte slice.
 ///
 /// # Safety
-/// Caller must guarantee `data` contains a valid `SlotHashes` structure.
+/// Caller must guarantee `data` contains a valid `SlotHashes` structure and that
+/// `num_entries` is the correct count of entries in `data`. It is up to caller whether
+/// to use MAX_ENTRIES or to use a call such as `get_entry_count_from_slice_unchecked`
 #[inline(always)]
-pub unsafe fn position_from_slice_unchecked(data: &[u8], target_slot: Slot) -> Option<usize> {
-    let len = get_entry_count_from_slice_unchecked(data);
-    if len == 0 {
-        return None;
-    }
-    let first_slot = u64::from_le_bytes(
-        data.get_unchecked(NUM_ENTRIES_SIZE..NUM_ENTRIES_SIZE + SLOT_SIZE)
-            .try_into()
-            .unwrap_unchecked(),
-    );
-
-    if target_slot > first_slot {
-        return None;
-    }
-    if target_slot == first_slot {
-        return Some(0);
-    }
-
-    let mut low = 0;
-    let mut high = len;
-    let entries_data_start = NUM_ENTRIES_SIZE;
-
-    while low < high {
-        let delta_slots = first_slot - target_slot;
-        let estimated_index = ((delta_slots * 19) / 20) as usize;
-        let mid = estimated_index.clamp(low, high.saturating_sub(1));
-
-        let entry_offset = entries_data_start + mid * ENTRY_SIZE;
-        let entry_bytes = data.get_unchecked(entry_offset..(entry_offset + ENTRY_SIZE));
-        let entry_slot = u64::from_le_bytes(
-            entry_bytes
-                .get_unchecked(0..SLOT_SIZE)
-                .try_into()
-                .unwrap_unchecked(),
-        );
-
-        match entry_slot.cmp(&target_slot) {
-            core::cmp::Ordering::Equal => return Some(mid),
-            core::cmp::Ordering::Greater => {
-                let slot_diff = entry_slot - target_slot;
-                let max_possible_index = mid + slot_diff as usize;
-                low = mid + 1;
-                high = high.min(max_possible_index + 1);
-            }
-            core::cmp::Ordering::Less => {
-                let slot_diff = target_slot - entry_slot;
-                let min_possible_index = mid.saturating_sub(slot_diff as usize);
-                high = mid;
-                low = low.max(min_possible_index);
-            }
-        }
-        if low >= high {
-            break;
-        }
-    }
-    None
+pub unsafe fn position_from_slice_unchecked(
+    data: &[u8],
+    target_slot: Slot,
+    num_entries: usize,
+) -> Option<usize> {
+    // Safety: Caller guarantees num_entries and data validity.
+    // Closures perform unchecked access, relying on these guarantees and
+    // on core_interpolated_search respecting num_entries for bounds.
+    core_interpolated_search(
+        target_slot,
+        num_entries,
+        || {
+            // Assumes num_entries > 0, which core_interpolated_search checks.
+            // If num_entries is 0, this closure won't be called.
+            u64::from_le_bytes(
+                data.get_unchecked(NUM_ENTRIES_SIZE..NUM_ENTRIES_SIZE + SLOT_SIZE)
+                    .try_into()
+                    .unwrap_unchecked(),
+            )
+        },
+        |idx| {
+            // The index `idx` comes from core_interpolated_search's `probe_idx`,
+            // which is clamped to be `< num_entries`.
+            let entry_offset = NUM_ENTRIES_SIZE + idx * ENTRY_SIZE;
+            let entry_bytes = data.get_unchecked(entry_offset..(entry_offset + ENTRY_SIZE));
+            u64::from_le_bytes(
+                entry_bytes
+                    .get_unchecked(0..SLOT_SIZE)
+                    .try_into()
+                    .unwrap_unchecked(),
+            )
+        },
+    )
 }
 
 /// Gets a reference to the hash for a specific slot from a raw byte slice **without validation**.
 ///
 /// # Safety
 /// Caller must guarantee `data` contains a valid `SlotHashes` structure.
+/// Caller must guarantee `num_entries` is the correct count of entries in `data`. It is up
+/// to caller whether to use MAX_ENTRIES or to use a call such as `get_entry_count_from_slice_unchecked`
 #[inline(always)]
 pub unsafe fn get_hash_from_slice_unchecked(
     data: &[u8],
     target_slot: Slot,
+    num_entries: usize,
 ) -> Option<&[u8; HASH_BYTES]> {
-    position_from_slice_unchecked(data, target_slot).map(|index| {
+    position_from_slice_unchecked(data, target_slot, num_entries).map(|index| {
         let entry_offset = NUM_ENTRIES_SIZE + index * ENTRY_SIZE;
         let hash_offset = entry_offset + SLOT_SIZE;
         let hash_bytes = data.get_unchecked(hash_offset..(hash_offset + HASH_BYTES));
@@ -447,6 +397,66 @@ where
     }
 }
 
+#[inline(always)]
+unsafe fn core_interpolated_search<FFirstSlot, FSlotAtIndex>(
+    target_slot: Slot,
+    num_entries: usize,
+    get_first_slot: FFirstSlot,
+    get_slot_at_index: FSlotAtIndex,
+) -> Option<usize>
+where
+    FFirstSlot: FnOnce() -> Slot,
+    FSlotAtIndex: Fn(usize) -> Slot,
+{
+    if num_entries == 0 {
+        return None;
+    }
+    let first_slot = get_first_slot();
+    if target_slot > first_slot {
+        return None;
+    }
+    if target_slot == first_slot {
+        return Some(0);
+    }
+
+    let mut low = 0;
+    let mut high = num_entries;
+
+    while low < high {
+        let delta_slots = first_slot.saturating_sub(target_slot);
+        // Heuristic: estimate index assuming average gap of ~5% (1/20 reduction per slot_diff)
+        let estimated_index = ((delta_slots.saturating_mul(19)) / 20) as usize;
+
+        // Clamp the estimated index to be within [low, high - 1] to get our probe point.
+        // Prevents the heuristic from going out of bounds.
+        let probe_idx = estimated_index.clamp(low, high.saturating_sub(1));
+
+        let entry_slot = get_slot_at_index(probe_idx);
+
+        match entry_slot.cmp(&target_slot) {
+            core::cmp::Ordering::Equal => return Some(probe_idx),
+            core::cmp::Ordering::Greater => {
+                // entry_slot at probe_idx is > target_slot. Target is further down (higher index).
+                let slot_diff = entry_slot - target_slot;
+                let max_possible_index_for_target = probe_idx.saturating_add(slot_diff as usize);
+                low = probe_idx + 1;
+                high = high.min(max_possible_index_for_target.saturating_add(1));
+            }
+            core::cmp::Ordering::Less => {
+                // entry_slot at probe_idx is < target_slot. Target is further up (lower index).
+                let slot_diff = target_slot - entry_slot;
+                let min_possible_index_for_target = probe_idx.saturating_sub(slot_diff as usize);
+                high = probe_idx;
+                low = low.max(min_possible_index_for_target);
+            }
+        }
+        if low >= high {
+            break;
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -463,6 +473,18 @@ mod tests {
         assert_eq!(ENTRY_SIZE, size_of::<u64>() + 32);
         assert_eq!(size_of::<SlotHashEntry>(), ENTRY_SIZE);
         assert_eq!(align_of::<SlotHashEntry>(), align_of::<u64>());
+        assert_eq!(
+            SLOTHASHES_ID,
+            [
+                6, 167, 213, 23, 25, 47, 10, 175, 198, 242, 101, 227, 251, 119, 204, 122, 218, 130,
+                197, 41, 208, 190, 59, 19, 110, 45, 0, 85, 32, 0, 0, 0,
+            ]
+        );
+        let slothashes_base58 = bs58::encode(&SLOTHASHES_ID).into_string();
+        assert_eq!(
+            slothashes_base58,
+            "SysvarS1otHashes111111111111111111111111111"
+        );
     }
 
     fn create_mock_data(entries: &[(u64, [u8; 32])]) -> Vec<u8> {
@@ -727,39 +749,48 @@ mod tests {
                 assert_eq!(get_entry_count_from_slice_unchecked(&data), NUM_ENTRIES);
 
                 // Test position_from_slice_unchecked
-                assert_eq!(position_from_slice_unchecked(&data, first_slot), Some(0));
                 assert_eq!(
-                    position_from_slice_unchecked(&data, mid_slot),
+                    position_from_slice_unchecked(&data, first_slot, NUM_ENTRIES),
+                    Some(0)
+                );
+                assert_eq!(
+                    position_from_slice_unchecked(&data, mid_slot, NUM_ENTRIES),
                     Some(mid_index)
                 );
                 assert_eq!(
-                    position_from_slice_unchecked(&data, last_slot),
+                    position_from_slice_unchecked(&data, last_slot, NUM_ENTRIES),
                     Some(NUM_ENTRIES - 1)
                 );
                 assert_eq!(
-                    position_from_slice_unchecked(&data, missing_slot_high),
+                    position_from_slice_unchecked(&data, missing_slot_high, NUM_ENTRIES),
                     None
                 );
-                assert_eq!(position_from_slice_unchecked(&data, missing_slot_low), None);
+                assert_eq!(
+                    position_from_slice_unchecked(&data, missing_slot_low, NUM_ENTRIES),
+                    None
+                );
 
                 // Test get_hash_from_slice_unchecked
                 assert_eq!(
-                    get_hash_from_slice_unchecked(&data, first_slot),
+                    get_hash_from_slice_unchecked(&data, first_slot, NUM_ENTRIES),
                     Some(&mock_entries[0].1)
                 );
                 assert_eq!(
-                    get_hash_from_slice_unchecked(&data, mid_slot),
+                    get_hash_from_slice_unchecked(&data, mid_slot, NUM_ENTRIES),
                     Some(&mock_entries[mid_index].1)
                 );
                 assert_eq!(
-                    get_hash_from_slice_unchecked(&data, last_slot),
+                    get_hash_from_slice_unchecked(&data, last_slot, NUM_ENTRIES),
                     Some(&mock_entries[NUM_ENTRIES - 1].1)
                 );
                 assert_eq!(
-                    get_hash_from_slice_unchecked(&data, missing_slot_high),
+                    get_hash_from_slice_unchecked(&data, missing_slot_high, NUM_ENTRIES),
                     None
                 );
-                assert_eq!(get_hash_from_slice_unchecked(&data, missing_slot_low), None);
+                assert_eq!(
+                    get_hash_from_slice_unchecked(&data, missing_slot_low, NUM_ENTRIES),
+                    None
+                );
 
                 // Test get_entry_from_slice_unchecked
                 let entry0 = get_entry_from_slice_unchecked(&data, 0);
@@ -774,8 +805,8 @@ mod tests {
             let empty_data = create_mock_data(&[]);
             unsafe {
                 assert_eq!(get_entry_count_from_slice_unchecked(&empty_data), 0);
-                assert_eq!(position_from_slice_unchecked(&empty_data, 100), None);
-                assert_eq!(get_hash_from_slice_unchecked(&empty_data, 100), None);
+                assert_eq!(position_from_slice_unchecked(&empty_data, 100, 0), None);
+                assert_eq!(get_hash_from_slice_unchecked(&empty_data, 100, 0), None);
                 // Calling get_entry_from_slice_unchecked with index 0 on empty data is UB, not tested.
             }
         }
