@@ -19,7 +19,7 @@ pub const HASH_BYTES: usize = 32;
 /// Sysvar data is:
 /// len    (8 bytes): little-endian entry count (≤ 512)
 /// entries(len × 40 bytes):    consecutive `(u64 slot, [u8;32] hash)` pairs
-const NUM_ENTRIES_SIZE: usize = mem::size_of::<u64>();
+pub const NUM_ENTRIES_SIZE: usize = mem::size_of::<u64>();
 pub const SLOT_SIZE: usize = mem::size_of::<Slot>();
 pub const ENTRY_SIZE: usize = SLOT_SIZE + HASH_BYTES;
 
