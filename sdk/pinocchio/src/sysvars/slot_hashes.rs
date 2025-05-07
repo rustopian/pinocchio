@@ -185,9 +185,7 @@ where
                 target_slot,
                 self.len,
                 || Slot::MAX, // Dummy closure, value unused
-                |idx| { 
-                    self.get_entry_unchecked(idx).slot
-                },
+                |idx| self.get_entry_unchecked(idx).slot,
             )
         }
     }
@@ -284,7 +282,7 @@ pub unsafe fn position_from_slice_binary_search_unchecked(
         target_slot,
         num_entries,
         || Slot::MAX, // Dummy closure, value unused
-        |idx| { 
+        |idx| {
             let entry_offset = NUM_ENTRIES_SIZE + idx * ENTRY_SIZE;
             let entry_bytes = data.get_unchecked(entry_offset..(entry_offset + ENTRY_SIZE));
             u64::from_le_bytes(
@@ -409,7 +407,7 @@ where
         match entry_slot.cmp(&target_slot) {
             core::cmp::Ordering::Equal => return Some(mid_idx),
             // Remember: SlotHashes are stored in descending order
-            core::cmp::Ordering::Less => high = mid_idx,      // entry_slot < target_slot => Target is in lower indices (left half)
+            core::cmp::Ordering::Less => high = mid_idx, // entry_slot < target_slot => Target is in lower indices (left half)
             core::cmp::Ordering::Greater => low = mid_idx + 1, // entry_slot > target_slot => Target is in higher indices (right half)
         }
     }
@@ -750,11 +748,19 @@ mod tests {
                     Some(NUM_ENTRIES - 1)
                 );
                 assert_eq!(
-                    position_from_slice_binary_search_unchecked(&data, missing_slot_high, NUM_ENTRIES),
+                    position_from_slice_binary_search_unchecked(
+                        &data,
+                        missing_slot_high,
+                        NUM_ENTRIES
+                    ),
                     None
                 );
                 assert_eq!(
-                    position_from_slice_binary_search_unchecked(&data, missing_slot_low, NUM_ENTRIES),
+                    position_from_slice_binary_search_unchecked(
+                        &data,
+                        missing_slot_low,
+                        NUM_ENTRIES
+                    ),
                     None
                 );
 
@@ -793,7 +799,10 @@ mod tests {
             let empty_data = create_mock_data(&[]);
             unsafe {
                 assert_eq!(get_entry_count_from_slice_unchecked(&empty_data), 0);
-                assert_eq!(position_from_slice_binary_search_unchecked(&empty_data, 100, 0), None);
+                assert_eq!(
+                    position_from_slice_binary_search_unchecked(&empty_data, 100, 0),
+                    None
+                );
                 assert_eq!(get_hash_from_slice_unchecked(&empty_data, 100, 0), None);
                 // Calling get_entry_from_slice_unchecked with index 0 on empty data is UB, not tested.
             }
