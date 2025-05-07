@@ -422,35 +422,37 @@ where
     let mut low = 0;
     let mut high = num_entries;
 
-    while low < high {
-        let delta_slots = first_slot.saturating_sub(target_slot);
-        // Heuristic: estimate index assuming average gap of ~5% (1/20 reduction per slot_diff)
-        let estimated_index = ((delta_slots.saturating_mul(19)) / 20) as usize;
+    // --- First Probe using Interpolation ---
+    let initial_delta_slots = first_slot.saturating_sub(target_slot);
+    let initial_estimated_index = ((initial_delta_slots.saturating_mul(19)) / 20) as usize;
+    let first_probe_idx = initial_estimated_index.clamp(low, high.saturating_sub(1));
+    let first_entry_slot = get_slot_at_index(first_probe_idx);
 
-        // Clamp the estimated index to be within [low, high - 1] to get our probe point.
-        // Prevents the heuristic from going out of bounds.
-        let probe_idx = estimated_index.clamp(low, high.saturating_sub(1));
-
-        let entry_slot = get_slot_at_index(probe_idx);
-
-        match entry_slot.cmp(&target_slot) {
-            core::cmp::Ordering::Equal => return Some(probe_idx),
-            core::cmp::Ordering::Greater => {
-                // entry_slot > target_slot. Target is at a higher index.
-                // Standard binary search update:
-                low = probe_idx + 1;
-            }
-            core::cmp::Ordering::Less => {
-                // entry_slot < target_slot. Target is at a lower index.
-                // Standard binary search update:
-                high = probe_idx;
-            }
+    match first_entry_slot.cmp(&target_slot) {
+        core::cmp::Ordering::Equal => return Some(first_probe_idx),
+        core::cmp::Ordering::Greater => { // first_entry_slot > target_slot
+            low = first_probe_idx + 1;
         }
-        if low >= high {
-            break;
+        core::cmp::Ordering::Less => { // first_entry_slot < target_slot
+            high = first_probe_idx;
         }
     }
-    None
+    // --- End First Probe --- 
+
+    // --- Subsequent Probes using Naive Binary Search ---
+    while low < high {
+        let mid_idx = low + (high - low) / 2; // Naive midpoint
+        let entry_slot = get_slot_at_index(mid_idx);
+
+        match entry_slot.cmp(&target_slot) {
+            core::cmp::Ordering::Equal => return Some(mid_idx),
+            core::cmp::Ordering::Greater => low = mid_idx + 1, // Standard update
+            core::cmp::Ordering::Less => high = mid_idx,      // Standard update
+        }
+    }
+    // --- End Naive Search ---
+
+    None // Not found after combining strategies
 }
 
 #[cfg(test)]
