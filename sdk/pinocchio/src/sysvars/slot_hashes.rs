@@ -117,7 +117,6 @@ where
     ///    (out-of-bounds access) or incorrect results.
     #[inline(always)]
     pub unsafe fn get_entry_count_unchecked(data: &[u8]) -> usize {
-        // Unsafe access: assumes data has at least NUM_ENTRIES_SIZE bytes.
         let len_bytes: [u8; NUM_ENTRIES_SIZE] = data
             .get_unchecked(0..NUM_ENTRIES_SIZE)
             .try_into()
@@ -149,7 +148,6 @@ where
         let start = NUM_ENTRIES_SIZE + index * ENTRY_SIZE;
         let end = start + ENTRY_SIZE;
 
-        // Safety bounds check
         let entry_bytes = self.data.get(start..end)?;
         // Safety: constructor guarantees data layout & alignment
         Some(unsafe { &*(entry_bytes.as_ptr() as *const SlotHashEntry) })
@@ -180,7 +178,6 @@ where
         // Safety: self.len is trusted. get_entry_unchecked is safe if index < self.len.
         // The core_binary_search logic respects num_entries (self.len here) for bounds.
         unsafe {
-            // Pass dummy closure for get_first_slot
             core_binary_search(
                 target_slot,
                 self.len,
@@ -196,7 +193,7 @@ where
     /// Assumes entries are sorted by slot in descending order.
     #[inline(always)]
     pub fn get_hash(&self, target_slot: Slot) -> Option<&[u8; HASH_BYTES]> {
-        self.binary_search_slot(target_slot) // Updated caller
+        self.binary_search_slot(target_slot)
             .and_then(|idx| self.get_entry(idx))
             .map(|entry| &entry.hash)
     }
@@ -207,7 +204,7 @@ where
     /// Assumes entries are sorted by slot in descending order.
     #[inline(always)]
     pub fn position(&self, target_slot: Slot) -> Option<usize> {
-        self.binary_search_slot(target_slot) // Updated caller
+        self.binary_search_slot(target_slot)
     }
 }
 
@@ -234,7 +231,6 @@ impl<'a> SlotHashes<Ref<'a, [u8]>> {
         let (num_entries, _) = Self::parse_and_validate_data(&data_ref)?;
 
         // Construct using the unsafe constructor, providing the validated Ref and count
-        // Safety: We performed the necessary checks above.
         Ok(unsafe { Self::new_unchecked(data_ref, num_entries) })
     }
 }
@@ -253,7 +249,6 @@ impl<'a> SlotHashes<Ref<'a, [u8]>> {
 ///    (out-of-bounds access) or incorrect results.
 #[inline(always)]
 pub unsafe fn get_entry_count_from_slice_unchecked(data: &[u8]) -> usize {
-    // Safety: assumes data has at least NUM_ENTRIES_SIZE bytes.
     let len_bytes: [u8; NUM_ENTRIES_SIZE] = data
         .get_unchecked(0..NUM_ENTRIES_SIZE)
         .try_into()
@@ -274,10 +269,6 @@ pub unsafe fn position_from_slice_binary_search_unchecked(
     target_slot: Slot,
     num_entries: usize,
 ) -> Option<usize> {
-    // Safety: Caller guarantees num_entries and data validity.
-    // Closures perform unchecked access, relying on these guarantees and
-    // on core_binary_search respecting num_entries for bounds.
-    // Pass dummy closure for get_first_slot
     core_binary_search(
         target_slot,
         num_entries,
