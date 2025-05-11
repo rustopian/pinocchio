@@ -165,14 +165,6 @@ where
     }
 
     /// Performs a binary search to find an entry with the given slot number.
-    ///
-    /// This uses a bounded interpolation search strategy that takes advantage of:
-    /// 1. Slots are monotonically decreasing
-    /// 2. Typical gap between slots is ~5% (used as a search heuristic)
-    /// 3. Minimum gap between slots is 1
-    ///
-    /// When we find a slot at an index, we can calculate minimum bounds based on
-    /// the minimum gap, and use typical gaps as a heuristic for probing.
     #[inline(always)]
     fn binary_search_slot(&self, target_slot: Slot) -> Option<usize> {
         // Safety: self.len is trusted. get_entry_unchecked is safe if index < self.len.
