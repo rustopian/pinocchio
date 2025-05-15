@@ -781,3 +781,115 @@ mod tests {
         assert_eq!(iter.len(), sh.len());
     }
 }
+
+#[cfg(test)]
+mod edge_tests {
+    use super::*;
+    extern crate std;
+    use crate::account_info::{Account, AccountInfo};
+    use crate::pubkey::Pubkey;
+    use core::{mem, ptr};
+    use std::vec::Vec;
+
+    fn raw_slot_hashes(declared_len: u64, entries: &[(u64, [u8; HASH_BYTES])]) -> Vec<u8> {
+        let mut v = Vec::with_capacity(NUM_ENTRIES_SIZE + entries.len() * ENTRY_SIZE);
+        v.extend_from_slice(&declared_len.to_le_bytes());
+        for (slot, hash) in entries {
+            v.extend_from_slice(&slot.to_le_bytes());
+            v.extend_from_slice(hash);
+        }
+        v
+    }
+
+    unsafe fn account_info_with(key: Pubkey, data: &[u8]) -> AccountInfo {
+        #[repr(C)]
+        struct Header {
+            borrow_state: u8,
+            is_signer: u8,
+            is_writable: u8,
+            executable: u8,
+            original_data_len: u32,
+            key: Pubkey,
+            owner: Pubkey,
+            lamports: u64,
+            data_len: u64,
+        }
+        let hdr_len = mem::size_of::<Header>();
+        let mut backing = std::vec![0u8; hdr_len + data.len()];
+        let hdr_ptr = backing.as_mut_ptr() as *mut Header;
+        ptr::write(
+            hdr_ptr,
+            Header {
+                borrow_state: 0,
+                is_signer: 0,
+                is_writable: 0,
+                executable: 0,
+                original_data_len: 0,
+                key,
+                owner: [0u8; 32],
+                lamports: 0,
+                data_len: data.len() as u64,
+            },
+        );
+        ptr::copy_nonoverlapping(data.as_ptr(), backing.as_mut_ptr().add(hdr_len), data.len());
+        // Leak backing so the slice outlives the AccountInfo for the duration of the test.
+        core::mem::forget(backing);
+        AccountInfo {
+            raw: hdr_ptr as *mut Account,
+        }
+    }
+
+    #[test]
+    fn wrong_key_from_account_info() {
+        let bytes = raw_slot_hashes(0, &[]);
+        let acct = unsafe { account_info_with([1u8; 32], &bytes) };
+        assert!(matches!(
+            SlotHashes::from_account_info(&acct),
+            Err(ProgramError::InvalidArgument)
+        ));
+    }
+
+    #[test]
+    fn too_many_entries_rejected() {
+        let bytes = raw_slot_hashes((MAX_ENTRIES as u64) + 1, &[]);
+        assert!(matches!(
+            SlotHashes::get_entry_count(&bytes),
+            Err(ProgramError::InvalidAccountData)
+        ));
+    }
+
+    #[test]
+    fn truncated_payload_rejected() {
+        let entry = (123u64, [7u8; HASH_BYTES]);
+        let bytes = raw_slot_hashes(2, &[entry]); // says 2 but provides 1
+        assert!(matches!(
+            SlotHashes::get_entry_count(&bytes),
+            Err(ProgramError::InvalidAccountData)
+        ));
+    }
+
+    #[test]
+    fn duplicate_slots_binary_search_safe() {
+        let entries = &[
+            (200, [0u8; HASH_BYTES]),
+            (200, [1u8; HASH_BYTES]),
+            (199, [2u8; HASH_BYTES]),
+        ];
+        let bytes = raw_slot_hashes(entries.len() as u64, entries);
+        let sh = unsafe { SlotHashes::new_unchecked_slice(&bytes, entries.len()) };
+        let dup_pos = sh.position(200).expect("slot 200 must exist");
+        assert!(
+            dup_pos <= 1,
+            "binary_search should return one of the duplicate indices (0 or 1)"
+        );
+        assert_eq!(sh.get_hash(199), Some(&entries[2].1));
+    }
+
+    #[test]
+    fn zero_len_minimal_slice_iterates_empty() {
+        let zero_bytes = 0u64.to_le_bytes();
+        let sh = unsafe { SlotHashes::new_unchecked_slice(&zero_bytes, 0) };
+        assert_eq!(sh.len(), 0);
+        assert!(sh.into_iter().next().is_none());
+    }
+}
