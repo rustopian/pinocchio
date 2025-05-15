@@ -763,6 +763,7 @@ mod tests {
 
             // Allocate an 8-byte aligned buffer large enough for `Account` + data.
             let mut aligned_backing: Vec<u64>; // will be initialised in unsafe block
+            #[allow(unused_assignments)]
             let mut acct_ptr: *mut Account = core::ptr::null_mut();
 
             #[repr(C)]
@@ -781,7 +782,7 @@ mod tests {
             unsafe {
                 // 1) Build a contiguous Vec<u8> with header followed by SlotHashes payload.
                 let header_size = mem::size_of::<FakeAccount>();
-                let mut blob: Vec<u8> = vec![0u8; header_size + data.len()];
+                let mut blob: Vec<u8> = std::vec![0u8; header_size + data.len()];
 
                 // Write the FakeAccount header.
                 let header_ptr = &mut blob[0] as *mut u8 as *mut FakeAccount;
