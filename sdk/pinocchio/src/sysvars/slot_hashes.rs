@@ -44,13 +44,13 @@ enum Data<'a> {
     Ref(Ref<'a, [u8]>),
 }
 
-impl<'a> core::ops::Deref for Data<'a> {
+impl core::ops::Deref for Data<'_> {
     type Target = [u8];
     #[inline(always)]
     fn deref(&self) -> &Self::Target {
         match self {
             Data::Slice(s) => s,
-            Data::Ref(r) => &**r,
+            Data::Ref(r) => r,
         }
     }
 }
@@ -87,6 +87,21 @@ impl<'a> SlotHashes<'a> {
 
     /// Same as `new_unchecked_slice` but keeps the `Ref` so the runtime borrow
     /// is held for the lifetime of the `SlotHashes` instance.
+    ///
+    /// # Safety
+    /// 
+    /// Items 2 and 4 are normally auto-satisfied in Solana program contexts.
+    ///
+    /// 1. `data` must point to a byte slice that represents **valid** SlotHashes
+    ///   contents for exactly `len` entries (i.e. it was previously validated, or
+    ///   the caller otherwise guarantees correctness).
+    /// 2. The memory backing `data` must remain valid for the entire lifetime `'a`
+    ///   of the returned `SlotHashes` value.
+    /// 3. The pointer in `data` must be correctly aligned for `SlotHashEntry` so
+    ///   that later reference casts are sound.
+    /// 4. Because a [`Ref`] is handed in, the caller must ensure the runtime
+    ///   borrow rules are respected (no mutable aliasing etc.) for as long as
+    ///   the returned `SlotHashes` exists.
     #[inline(always)]
     pub unsafe fn new_unchecked_ref(data: Ref<'a, [u8]>, len: usize) -> Self {
         SlotHashes {
@@ -108,7 +123,8 @@ impl<'a> SlotHashes<'a> {
         }
 
         // read the little-endian `u64` without an intermediate copy
-        let num_entries = unsafe { ptr::read_unaligned(data.as_ptr() as *const u64) }.to_le() as usize;
+        let num_entries =
+            unsafe { ptr::read_unaligned(data.as_ptr() as *const u64) }.to_le() as usize;
 
         // Reject (rather than cap) oversized accounts so callers are not
         // surprised by silently truncated results.
@@ -220,9 +236,8 @@ impl<'a> SlotHashes<'a> {
         // Debug-time guard only — avoids any extra work in release mode.
         debug_assert!(self.data.deref().len() >= NUM_ENTRIES_SIZE + self.len * ENTRY_SIZE);
 
-        let entries_ptr = unsafe {
-            self.data.deref().as_ptr().add(NUM_ENTRIES_SIZE) as *const SlotHashEntry
-        };
+        let entries_ptr =
+            unsafe { self.data.deref().as_ptr().add(NUM_ENTRIES_SIZE) as *const SlotHashEntry };
         unsafe { core::slice::from_raw_parts(entries_ptr, self.len) }
     }
 }
@@ -456,14 +471,12 @@ mod tests {
             assert_eq!(unsafe_len, 3);
 
             assert!(SlotHashes::get_entry_count(&data[0..NUM_ENTRIES_SIZE - 1]).is_err());
-            assert!(SlotHashes::get_entry_count(
-                &data[0..NUM_ENTRIES_SIZE + 2 * ENTRY_SIZE]
-            )
-            .is_err());
-            assert!(SlotHashes::get_entry_count(
-                &data[0..NUM_ENTRIES_SIZE + 3 * ENTRY_SIZE]
-            )
-            .is_ok());
+            assert!(
+                SlotHashes::get_entry_count(&data[0..NUM_ENTRIES_SIZE + 2 * ENTRY_SIZE]).is_err()
+            );
+            assert!(
+                SlotHashes::get_entry_count(&data[0..NUM_ENTRIES_SIZE + 3 * ENTRY_SIZE]).is_ok()
+            );
 
             let empty_data = create_mock_data(&[]);
             let empty_len = SlotHashes::get_entry_count(&empty_data).unwrap();
@@ -480,7 +493,8 @@ mod tests {
                 generate_mock_entries(NUM_ENTRIES, START_SLOT, DecrementStrategy::Average1_05);
             let mock_data = create_mock_data(&mock_entries);
             let count = mock_entries.len();
-            let slot_hashes = unsafe { SlotHashes::new_unchecked_slice(mock_data.as_slice(), count) };
+            let slot_hashes =
+                unsafe { SlotHashes::new_unchecked_slice(mock_data.as_slice(), count) };
 
             let first_slot = mock_entries[0].0;
             let last_slot = mock_entries[NUM_ENTRIES - 1].0;
@@ -603,7 +617,8 @@ mod tests {
             let short_data_2 = &data[0..NUM_ENTRIES_SIZE + ENTRY_SIZE]; // Only space for 1 entry
             let res2 = SlotHashes::get_entry_count(short_data_2);
             assert!(matches!(res2, Err(ProgramError::InvalidAccountData)));
-            let count_res_unchecked_2 = unsafe { SlotHashes::get_entry_count_unchecked(short_data_2) };
+            let count_res_unchecked_2 =
+                unsafe { SlotHashes::get_entry_count_unchecked(short_data_2) };
             assert_eq!(count_res_unchecked_2, 2);
 
             // Empty data is valid
@@ -728,7 +743,8 @@ mod tests {
 
             // Iterate by shared reference (uses our IntoIterator impl for &SlotHashes)
             let mut collected: Vec<u64> = Vec::new();
-            for e in &sh { // implicitly invokes into_iter(&sh)
+            for e in &sh {
+                // implicitly invokes into_iter(&sh)
                 collected.push(e.slot);
             }
             let expected: Vec<u64> = entries.iter().map(|(s, _)| *s).collect();
@@ -743,26 +759,42 @@ mod tests {
         fn test_from_account_info_constructor() {
             // Cover the safe constructor that goes through `AccountInfo` and holds the Ref.
             use crate::account_info::{Account, AccountInfo};
+            use crate::pubkey::Pubkey;
             use core::{mem, ptr};
 
             const NUM_ENTRIES: usize = 3;
             const START_SLOT: u64 = 1234;
-            let mock_entries = generate_mock_entries(NUM_ENTRIES, START_SLOT, DecrementStrategy::Strictly1);
+            let mock_entries =
+                generate_mock_entries(NUM_ENTRIES, START_SLOT, DecrementStrategy::Strictly1);
             let data = create_mock_data(&mock_entries);
 
             // Allocate an 8-byte aligned buffer large enough for `Account` + data.
-            let total_bytes = mem::size_of::<Account>() + data.len();
-            let words = (total_bytes + 7) / 8; // round up to u64 words
-            let mut backing: Vec<u64> = vec![0u64; words];
-            let ptr_u8 = backing.as_mut_ptr() as *mut u8;
-            let acct_ptr = ptr_u8 as *mut Account;
+            let mut aligned_backing: Vec<u64>; // will be initialised in unsafe block
+            let mut acct_ptr: *mut Account = core::ptr::null_mut();
+
+            #[repr(C)]
+            struct FakeAccount {
+                borrow_state: u8,
+                is_signer: u8,
+                is_writable: u8,
+                executable: u8,
+                original_data_len: u32,
+                key: Pubkey,
+                owner: Pubkey,
+                lamports: u64,
+                data_len: u64,
+            }
 
             unsafe {
-                // Write an `Account` header that satisfies the invariants expected by
-                // `AccountInfo::try_borrow_data` and `SlotHashes::from_account_info`.
+                // 1) Build a contiguous Vec<u8> with header followed by SlotHashes payload.
+                let header_size = mem::size_of::<FakeAccount>();
+                let mut blob: Vec<u8> = vec![0u8; header_size + data.len()];
+
+                // Write the FakeAccount header.
+                let header_ptr = &mut blob[0] as *mut u8 as *mut FakeAccount;
                 ptr::write(
-                    acct_ptr,
-                    Account {
+                    header_ptr,
+                    FakeAccount {
                         borrow_state: 0,
                         is_signer: 0,
                         is_writable: 0,
@@ -775,12 +807,27 @@ mod tests {
                     },
                 );
 
-                // Copy the SlotHashes byte-payload immediately after the `Account` header.
+                // Copy the SlotHashes data bytes just after the header.
                 ptr::copy_nonoverlapping(
                     data.as_ptr(),
-                    ptr_u8.add(mem::size_of::<Account>()),
+                    blob.as_mut_ptr().add(header_size),
                     data.len(),
                 );
+
+                // 2) Allocate an aligned Vec<u64> and copy the blob into it.
+                let word_len = (blob.len() + 7) / 8;
+                aligned_backing = std::vec![0u64; word_len];
+                ptr::copy_nonoverlapping(
+                    blob.as_ptr(),
+                    aligned_backing.as_mut_ptr() as *mut u8,
+                    blob.len(),
+                );
+
+                // Update our earlier pointers to point into the aligned backing.
+                // We purposely shadow the earlier variables so the remainder of the test
+                // works unchanged.
+                let ptr_u8 = aligned_backing.as_mut_ptr() as *mut u8;
+                acct_ptr = ptr_u8 as *mut Account;
             }
 
             let account_info = AccountInfo { raw: acct_ptr };
@@ -990,7 +1037,8 @@ mod tests {
         let empty_res = SlotHashes::get_entry_count(empty_raw_data.as_slice());
         assert!(empty_res.is_ok());
         assert_eq!(empty_res.unwrap(), 0);
-        let unsafe_empty_len = unsafe { SlotHashes::get_entry_count_unchecked(empty_raw_data.as_slice()) };
+        let unsafe_empty_len =
+            unsafe { SlotHashes::get_entry_count_unchecked(empty_raw_data.as_slice()) };
         assert_eq!(unsafe_empty_len, 0);
     }
 
