@@ -89,19 +89,19 @@ impl<'a> SlotHashes<'a> {
     /// is held for the lifetime of the `SlotHashes` instance.
     ///
     /// # Safety
-    /// 
+    ///
     /// Items 2 and 4 are normally auto-satisfied in Solana program contexts.
     ///
     /// 1. `data` must point to a byte slice that represents **valid** SlotHashes
-    ///   contents for exactly `len` entries (i.e. it was previously validated, or
-    ///   the caller otherwise guarantees correctness).
+    ///    contents for exactly `len` entries (i.e. it was previously validated, or
+    ///    the caller otherwise guarantees correctness).
     /// 2. The memory backing `data` must remain valid for the entire lifetime `'a`
-    ///   of the returned `SlotHashes` value.
+    ///    of the returned `SlotHashes` value.
     /// 3. The pointer in `data` must be correctly aligned for `SlotHashEntry` so
-    ///   that later reference casts are sound.
+    ///    that later reference casts are sound.
     /// 4. Because a [`Ref`] is handed in, the caller must ensure the runtime
-    ///   borrow rules are respected (no mutable aliasing etc.) for as long as
-    ///   the returned `SlotHashes` exists.
+    ///    borrow rules are respected (no mutable aliasing etc.) for as long as
+    ///    the returned `SlotHashes` exists.
     #[inline(always)]
     pub unsafe fn new_unchecked_ref(data: Ref<'a, [u8]>, len: usize) -> Self {
         SlotHashes {
