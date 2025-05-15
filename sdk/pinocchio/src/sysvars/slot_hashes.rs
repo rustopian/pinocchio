@@ -738,6 +738,62 @@ mod tests {
             let iter = (&sh).into_iter();
             assert_eq!(iter.len(), sh.len());
         }
+
+        #[test]
+        fn test_from_account_info_constructor() {
+            // Cover the safe constructor that goes through `AccountInfo` and holds the Ref.
+            use crate::account_info::{Account, AccountInfo};
+            use core::{mem, ptr};
+
+            const NUM_ENTRIES: usize = 3;
+            const START_SLOT: u64 = 1234;
+            let mock_entries = generate_mock_entries(NUM_ENTRIES, START_SLOT, DecrementStrategy::Strictly1);
+            let data = create_mock_data(&mock_entries);
+
+            // Allocate an 8-byte aligned buffer large enough for `Account` + data.
+            let total_bytes = mem::size_of::<Account>() + data.len();
+            let words = (total_bytes + 7) / 8; // round up to u64 words
+            let mut backing: Vec<u64> = vec![0u64; words];
+            let ptr_u8 = backing.as_mut_ptr() as *mut u8;
+            let acct_ptr = ptr_u8 as *mut Account;
+
+            unsafe {
+                // Write an `Account` header that satisfies the invariants expected by
+                // `AccountInfo::try_borrow_data` and `SlotHashes::from_account_info`.
+                ptr::write(
+                    acct_ptr,
+                    Account {
+                        borrow_state: 0,
+                        is_signer: 0,
+                        is_writable: 0,
+                        executable: 0,
+                        original_data_len: 0,
+                        key: SLOTHASHES_ID,
+                        owner: [0u8; 32],
+                        lamports: 0,
+                        data_len: data.len() as u64,
+                    },
+                );
+
+                // Copy the SlotHashes byte-payload immediately after the `Account` header.
+                ptr::copy_nonoverlapping(
+                    data.as_ptr(),
+                    ptr_u8.add(mem::size_of::<Account>()),
+                    data.len(),
+                );
+            }
+
+            let account_info = AccountInfo { raw: acct_ptr };
+            let slot_hashes = SlotHashes::from_account_info(&account_info)
+                .expect("from_account_info should succeed with well-formed data");
+
+            // Basic sanity checks on the returned view.
+            assert_eq!(slot_hashes.len(), NUM_ENTRIES);
+            for (i, entry) in slot_hashes.into_iter().enumerate() {
+                assert_eq!(entry.slot, mock_entries[i].0);
+                assert_eq!(entry.hash, mock_entries[i].1);
+            }
+        }
     }
 
     #[derive(Clone, Copy, Debug)]
