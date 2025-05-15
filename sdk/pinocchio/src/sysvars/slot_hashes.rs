@@ -121,18 +121,15 @@ impl<'a> SlotHashes<'a> {
         if data.len() < NUM_ENTRIES_SIZE {
             return Err(ProgramError::AccountDataTooSmall);
         }
-
-        // read the little-endian `u64` without an intermediate copy
         let num_entries =
             unsafe { ptr::read_unaligned(data.as_ptr() as *const u64) }.to_le() as usize;
 
-        // Reject (rather than cap) oversized accounts so callers are not
+        // Reject oversized accounts so callers are not
         // surprised by silently truncated results.
         if num_entries > MAX_ENTRIES {
             return Err(ProgramError::InvalidAccountData);
         }
 
-        // Ensure the data slice is long enough for all declared entries.
         let required_len = NUM_ENTRIES_SIZE + num_entries * ENTRY_SIZE;
         if data.len() < required_len {
             return Err(ProgramError::InvalidAccountData);
@@ -143,8 +140,6 @@ impl<'a> SlotHashes<'a> {
 
     /// Gets the number of entries stored in the provided data slice.
     /// Performs validation checks and returns the entry count if valid.
-    ///
-    /// Useful for testing or when only the entry count is needed.
     #[inline(always)]
     pub fn get_entry_count(data: &[u8]) -> Result<usize, ProgramError> {
         let num_entries = Self::parse_and_validate_data(data)?;
@@ -627,11 +622,9 @@ mod tests {
             let data = create_mock_data(&mock_entries);
             let slot_hashes = unsafe { SlotHashes::new_unchecked_slice(data.as_slice(), 1) };
 
-            // Safety: index 0 is valid because len is 1
             let entry = unsafe { slot_hashes.get_entry_unchecked(0) };
             assert_eq!(entry.slot, mock_entries[0].0);
             assert_eq!(entry.hash, mock_entries[0].1);
-            // Note: Accessing index 1 here would be UB and is not tested.
         }
 
         #[test]
@@ -649,12 +642,8 @@ mod tests {
             let missing_slot_high = START_SLOT + 1;
             let missing_slot_low = mock_entries.last().unwrap().0 - 1;
 
-            // Safety: We guarantee `data` is valid based on `create_mock_data`
             unsafe {
-                // Test get_entry_count_unchecked (already tested elsewhere, but confirm here)
                 assert_eq!(get_entry_count_from_slice_unchecked(&data), NUM_ENTRIES);
-
-                // Test position_from_slice_binary_search_unchecked
                 assert_eq!(
                     position_from_slice_binary_search_unchecked(&data, first_slot, NUM_ENTRIES),
                     Some(0)
@@ -734,16 +723,13 @@ mod tests {
             let data = create_mock_data(&entries);
             let sh = unsafe { SlotHashes::new_unchecked_slice(data.as_slice(), entries.len()) };
 
-            // Iterate by shared reference (uses our IntoIterator impl for &SlotHashes)
             let mut collected: Vec<u64> = Vec::new();
             for e in &sh {
-                // implicitly invokes into_iter(&sh)
                 collected.push(e.slot);
             }
             let expected: Vec<u64> = entries.iter().map(|(s, _)| *s).collect();
             assert_eq!(collected, expected);
 
-            // slice::Iter implements ExactSizeIterator; confirm len() matches.
             let iter = (&sh).into_iter();
             assert_eq!(iter.len(), sh.len());
         }
@@ -761,8 +747,7 @@ mod tests {
                 generate_mock_entries(NUM_ENTRIES, START_SLOT, DecrementStrategy::Strictly1);
             let data = create_mock_data(&mock_entries);
 
-            // Allocate an 8-byte aligned buffer large enough for `Account` + data.
-            let mut aligned_backing: Vec<u64>; // will be initialised in unsafe block
+            let mut aligned_backing: Vec<u64>;
             #[allow(unused_assignments)]
             let mut acct_ptr: *mut Account = core::ptr::null_mut();
 
@@ -784,7 +769,6 @@ mod tests {
                 let header_size = mem::size_of::<FakeAccount>();
                 let mut blob: Vec<u8> = std::vec![0u8; header_size + data.len()];
 
-                // Write the FakeAccount header.
                 let header_ptr = &mut blob[0] as *mut u8 as *mut FakeAccount;
                 ptr::write(
                     header_ptr,
@@ -801,14 +785,12 @@ mod tests {
                     },
                 );
 
-                // Copy the SlotHashes data bytes just after the header.
                 ptr::copy_nonoverlapping(
                     data.as_ptr(),
                     blob.as_mut_ptr().add(header_size),
                     data.len(),
                 );
 
-                // 2) Allocate an aligned Vec<u64> and copy the blob into it.
                 let word_len = (blob.len() + 7) / 8;
                 aligned_backing = std::vec![0u64; word_len];
                 ptr::copy_nonoverlapping(
@@ -817,8 +799,7 @@ mod tests {
                     blob.len(),
                 );
 
-                // Update our earlier pointers to point into the aligned backing.
-                // We purposely shadow the earlier variables so the remainder of the test
+                // Purposely shadow the earlier variables so the remainder of the test
                 // works unchanged.
                 let ptr_u8 = aligned_backing.as_mut_ptr() as *mut u8;
                 acct_ptr = ptr_u8 as *mut Account;
