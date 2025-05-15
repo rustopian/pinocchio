@@ -225,15 +225,13 @@ impl<'a> SlotHashes<'a> {
     ///
     /// The constructor (either the safe path that called `parse_and_validate_data` or
     /// the unsafe `new_unchecked`) is responsible for ensuring the slice is big enough
-    /// and properly aligned.  Here we simply create the slice and rely on a
-    /// `debug_assert!` to catch accidental misuse in debug builds.
+    /// and properly aligned.
     #[inline(always)]
     fn as_entries_slice(&self) -> &[SlotHashEntry] {
         if self.len == 0 {
             return &[];
         }
 
-        // Debug-time guard only — avoids any extra work in release mode.
         debug_assert!(self.data.deref().len() >= NUM_ENTRIES_SIZE + self.len * ENTRY_SIZE);
 
         let entries_ptr =
@@ -250,11 +248,6 @@ impl<'a> SlotHashes<'a> {
     /// - The account key matches the `SLOTHASHES_ID`
     /// - The data contains a valid length prefix
     /// - The data is sufficiently large to hold the indicated number of entries
-    ///
-    /// Returns `ProgramError::InvalidArgument` if the account key doesn't match `ID`.
-    /// Returns `ProgramError::AccountDataTooSmall` if the data is too short.
-    /// Returns `ProgramError::InvalidAccountData` if the data length is inconsistent.
-    /// Returns `ProgramError::AccountBorrowFailed` if the data cannot be borrowed.
     #[inline(always)]
     pub fn from_account_info(account_info: &'a AccountInfo) -> Result<Self, ProgramError> {
         if account_info.key() != &SLOTHASHES_ID {
