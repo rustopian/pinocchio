@@ -6,7 +6,7 @@ use crate::{
     pubkey::Pubkey,
     sysvars::clock::Slot,
 };
-use core::{mem, ops::Deref};
+use core::{mem, ops::Deref, ptr};
 
 /// SysvarS1otHashes111111111111111111111111111
 pub const SLOTHASHES_ID: Pubkey = [
@@ -35,21 +35,33 @@ pub struct SlotHashEntry {
 
 /// Provides zero-copy access to the data of the `SlotHashes` sysvar.
 ///
-/// This struct can work with either a safely borrowed `Ref<'a, [u8]>` from an
-/// `AccountInfo` (via `from_account_info`) or a raw `&'a [u8]` slice
-/// (via the `new_unchecked` constructor).
-pub struct SlotHashes<T>
-where
-    T: Deref<Target = [u8]>,
-{
-    data: T,
+/// Internally it keeps either a plain slice `&'a [u8]` *or* the `Ref<'a, [u8]>`
+/// returned by `AccountInfo::try_borrow_data()`.  Holding the `Ref` variant is
+/// important because dropping the `Ref` would release the runtime borrow while
+/// users still hold `&[u8]` references obtained from the struct.
+enum Data<'a> {
+    Slice(&'a [u8]),
+    Ref(Ref<'a, [u8]>),
+}
+
+impl<'a> core::ops::Deref for Data<'a> {
+    type Target = [u8];
+    #[inline(always)]
+    fn deref(&self) -> &Self::Target {
+        match self {
+            Data::Slice(s) => s,
+            Data::Ref(r) => &**r,
+        }
+    }
+}
+
+/// SlotHashes provides read-only, zero-copy access to SlotHashes sysvar bytes.
+pub struct SlotHashes<'a> {
+    data: Data<'a>,
     len: usize,
 }
 
-impl<T> SlotHashes<T>
-where
-    T: Deref<Target = [u8]>,
-{
+impl<'a> SlotHashes<'a> {
     /// Creates a `SlotHashes` instance directly from a data container and entry count.
     /// Important: provide a valid len. Whether or not len is assumed to be
     /// the constant 20_488 (512 entries) is up to caller.
@@ -66,33 +78,51 @@ where
     /// 5. Alignment is correct.
     ///
     #[inline(always)]
-    pub unsafe fn new_unchecked(data: T, len: usize) -> Self {
-        SlotHashes { data, len }
+    pub unsafe fn new_unchecked_slice(data: &'a [u8], len: usize) -> Self {
+        SlotHashes {
+            data: Data::Slice(data),
+            len,
+        }
     }
 
-    /// Helper function to parse and validate SlotHashes sysvar data from a slice.
-    /// Used by the checked `from_account_info` path, but not unchecked paths.
-    /// Returns (number_of_entries, required_length) if valid.
+    /// Same as `new_unchecked_slice` but keeps the `Ref` so the runtime borrow
+    /// is held for the lifetime of the `SlotHashes` instance.
     #[inline(always)]
-    fn parse_and_validate_data(data: &[u8]) -> Result<(usize, usize), ProgramError> {
+    pub unsafe fn new_unchecked_ref(data: Ref<'a, [u8]>, len: usize) -> Self {
+        SlotHashes {
+            data: Data::Ref(data),
+            len,
+        }
+    }
+
+    /// Parses the length prefix of a SlotHashes account and validates that the
+    /// slice is large enough for that many entries.  Only used by the *checked*
+    /// construction paths; unchecked helpers are free to skip this work.
+    ///
+    /// Returns the number of entries on success.
+    #[inline(always)]
+    fn parse_and_validate_data(data: &[u8]) -> Result<usize, ProgramError> {
+        // Need at least the 8-byte length prefix.
         if data.len() < NUM_ENTRIES_SIZE {
             return Err(ProgramError::AccountDataTooSmall);
         }
 
-        let len_bytes: [u8; NUM_ENTRIES_SIZE] = unsafe { data.get_unchecked(0..NUM_ENTRIES_SIZE) }
-            .try_into()
-            .unwrap();
-        let num_entries = u64::from_le_bytes(len_bytes);
-        let num_entries_usize = (num_entries as usize).min(MAX_ENTRIES);
+        // read the little-endian `u64` without an intermediate copy
+        let num_entries = unsafe { ptr::read_unaligned(data.as_ptr() as *const u64) }.to_le() as usize;
 
-        let required_len =
-            NUM_ENTRIES_SIZE.saturating_add(num_entries_usize.saturating_mul(ENTRY_SIZE));
+        // Reject (rather than cap) oversized accounts so callers are not
+        // surprised by silently truncated results.
+        if num_entries > MAX_ENTRIES {
+            return Err(ProgramError::InvalidAccountData);
+        }
 
+        // Ensure the data slice is long enough for all declared entries.
+        let required_len = NUM_ENTRIES_SIZE + num_entries * ENTRY_SIZE;
         if data.len() < required_len {
             return Err(ProgramError::InvalidAccountData);
         }
 
-        Ok((num_entries_usize, required_len))
+        Ok(num_entries)
     }
 
     /// Gets the number of entries stored in the provided data slice.
@@ -101,7 +131,7 @@ where
     /// Useful for testing or when only the entry count is needed.
     #[inline(always)]
     pub fn get_entry_count(data: &[u8]) -> Result<usize, ProgramError> {
-        let (num_entries, _) = Self::parse_and_validate_data(data)?;
+        let num_entries = Self::parse_and_validate_data(data)?;
         Ok(num_entries)
     }
 
@@ -117,12 +147,7 @@ where
     ///    (out-of-bounds access) or incorrect results.
     #[inline(always)]
     pub unsafe fn get_entry_count_unchecked(data: &[u8]) -> usize {
-        let len_bytes: [u8; NUM_ENTRIES_SIZE] = data
-            .get_unchecked(0..NUM_ENTRIES_SIZE)
-            .try_into()
-            .unwrap_unchecked();
-        let num_entries = u64::from_le_bytes(len_bytes);
-        num_entries as usize
+        ptr::read_unaligned(data.as_ptr() as *const u64).to_le() as usize
     }
 
     /// Returns the number of `SlotHashEntry` items accessible.
@@ -141,16 +166,7 @@ where
     /// Returns `None` if the index is out of bounds.
     #[inline(always)]
     pub fn get_entry(&self, index: usize) -> Option<&SlotHashEntry> {
-        if index >= self.len {
-            return None;
-        }
-
-        let start = NUM_ENTRIES_SIZE + index * ENTRY_SIZE;
-        let end = start + ENTRY_SIZE;
-
-        let entry_bytes = self.data.get(start..end)?;
-        // Safety: constructor guarantees data layout & alignment
-        Some(unsafe { &*(entry_bytes.as_ptr() as *const SlotHashEntry) })
+        self.as_entries_slice().get(index)
     }
 
     /// Gets a reference without bounds checking.
@@ -161,30 +177,7 @@ where
     pub unsafe fn get_entry_unchecked(&self, index: usize) -> &SlotHashEntry {
         debug_assert!(index < self.len);
         let offset = NUM_ENTRIES_SIZE + index * ENTRY_SIZE;
-        &*(self.data.as_ptr().add(offset) as *const SlotHashEntry)
-    }
-
-    /// Performs a binary search to find an entry with the given slot number.
-    ///
-    /// This uses a bounded interpolation search strategy that takes advantage of:
-    /// 1. Slots are monotonically decreasing
-    /// 2. Typical gap between slots is ~5% (used as a search heuristic)
-    /// 3. Minimum gap between slots is 1
-    ///
-    /// When we find a slot at an index, we can calculate minimum bounds based on
-    /// the minimum gap, and use typical gaps as a heuristic for probing.
-    #[inline(always)]
-    fn binary_search_slot(&self, target_slot: Slot) -> Option<usize> {
-        // Safety: self.len is trusted. get_entry_unchecked is safe if index < self.len.
-        // The core_binary_search logic respects num_entries (self.len here) for bounds.
-        unsafe {
-            core_binary_search(
-                target_slot,
-                self.len,
-                || Slot::MAX, // Dummy closure, value unused
-                |idx| self.get_entry_unchecked(idx).slot,
-            )
-        }
+        &*(self.data.deref().as_ptr().add(offset) as *const SlotHashEntry)
     }
 
     /// Finds the hash for a specific slot using binary search.
@@ -193,9 +186,11 @@ where
     /// Assumes entries are sorted by slot in descending order.
     #[inline(always)]
     pub fn get_hash(&self, target_slot: Slot) -> Option<&[u8; HASH_BYTES]> {
-        self.binary_search_slot(target_slot)
-            .and_then(|idx| self.get_entry(idx))
-            .map(|entry| &entry.hash)
+        let entries = self.as_entries_slice();
+        entries
+            .binary_search_by(|probe_entry| probe_entry.slot.cmp(&target_slot).reverse())
+            .ok()
+            .map(|index| &entries[index].hash)
     }
 
     /// Finds the position (index) of a specific slot using binary search.
@@ -204,12 +199,36 @@ where
     /// Assumes entries are sorted by slot in descending order.
     #[inline(always)]
     pub fn position(&self, target_slot: Slot) -> Option<usize> {
-        self.binary_search_slot(target_slot)
+        let entries = self.as_entries_slice();
+        entries
+            .binary_search_by(|probe_entry| probe_entry.slot.cmp(&target_slot).reverse())
+            .ok()
+    }
+
+    /// Returns a `&[SlotHashEntry]` view into the underlying data.
+    ///
+    /// The constructor (either the safe path that called `parse_and_validate_data` or
+    /// the unsafe `new_unchecked`) is responsible for ensuring the slice is big enough
+    /// and properly aligned.  Here we simply create the slice and rely on a
+    /// `debug_assert!` to catch accidental misuse in debug builds.
+    #[inline(always)]
+    fn as_entries_slice(&self) -> &[SlotHashEntry] {
+        if self.len == 0 {
+            return &[];
+        }
+
+        // Debug-time guard only — avoids any extra work in release mode.
+        debug_assert!(self.data.deref().len() >= NUM_ENTRIES_SIZE + self.len * ENTRY_SIZE);
+
+        let entries_ptr = unsafe {
+            self.data.deref().as_ptr().add(NUM_ENTRIES_SIZE) as *const SlotHashEntry
+        };
+        unsafe { core::slice::from_raw_parts(entries_ptr, self.len) }
     }
 }
 
 // Implementation block specific to the safe Ref version
-impl<'a> SlotHashes<Ref<'a, [u8]>> {
+impl<'a> SlotHashes<'a> {
     /// Creates a `SlotHashes` instance by safely borrowing data from an `AccountInfo`.
     ///
     /// This function verifies that:
@@ -228,10 +247,14 @@ impl<'a> SlotHashes<Ref<'a, [u8]>> {
         }
 
         let data_ref = account_info.try_borrow_data()?;
-        let (num_entries, _) = Self::parse_and_validate_data(&data_ref)?;
+        // Ensure the byte slice is suitably aligned for `SlotHashEntry`
+        if (data_ref.as_ptr() as usize) % mem::align_of::<SlotHashEntry>() != 0 {
+            return Err(ProgramError::InvalidAccountData);
+        }
 
-        // Construct using the unsafe constructor, providing the validated Ref and count
-        Ok(unsafe { Self::new_unchecked(data_ref, num_entries) })
+        let num_entries = Self::parse_and_validate_data(&data_ref)?;
+
+        Ok(unsafe { Self::new_unchecked_ref(data_ref, num_entries) })
     }
 }
 
@@ -249,12 +272,7 @@ impl<'a> SlotHashes<Ref<'a, [u8]>> {
 ///    (out-of-bounds access) or incorrect results.
 #[inline(always)]
 pub unsafe fn get_entry_count_from_slice_unchecked(data: &[u8]) -> usize {
-    let len_bytes: [u8; NUM_ENTRIES_SIZE] = data
-        .get_unchecked(0..NUM_ENTRIES_SIZE)
-        .try_into()
-        .unwrap_unchecked();
-    let num_entries = u64::from_le_bytes(len_bytes);
-    num_entries as usize
+    ptr::read_unaligned(data.as_ptr() as *const u64).to_le() as usize
 }
 
 /// Performs an **unsafe** naive binary search directly on a raw byte slice.
@@ -269,21 +287,8 @@ pub unsafe fn position_from_slice_binary_search_unchecked(
     target_slot: Slot,
     num_entries: usize,
 ) -> Option<usize> {
-    core_binary_search(
-        target_slot,
-        num_entries,
-        || Slot::MAX, // Dummy closure, value unused
-        |idx| {
-            let entry_offset = NUM_ENTRIES_SIZE + idx * ENTRY_SIZE;
-            let entry_bytes = data.get_unchecked(entry_offset..(entry_offset + ENTRY_SIZE));
-            u64::from_le_bytes(
-                entry_bytes
-                    .get_unchecked(0..SLOT_SIZE)
-                    .try_into()
-                    .unwrap_unchecked(),
-            )
-        },
-    )
+    // caller promises `data` is large enough and properly formatted
+    SlotHashes::new_unchecked_slice(data, num_entries).position(target_slot)
 }
 
 /// Gets a reference to the hash for a specific slot from a raw byte slice **without validation**.
@@ -298,12 +303,9 @@ pub unsafe fn get_hash_from_slice_unchecked(
     target_slot: Slot,
     num_entries: usize,
 ) -> Option<&[u8; HASH_BYTES]> {
-    position_from_slice_binary_search_unchecked(data, target_slot, num_entries).map(|index| {
-        let entry_offset = NUM_ENTRIES_SIZE + index * ENTRY_SIZE;
-        let hash_offset = entry_offset + SLOT_SIZE;
-        let hash_bytes = data.get_unchecked(hash_offset..(hash_offset + HASH_BYTES));
-        &*(hash_bytes.as_ptr() as *const [u8; HASH_BYTES])
-    })
+    let index = position_from_slice_binary_search_unchecked(data, target_slot, num_entries)?;
+    let hash_offset = NUM_ENTRIES_SIZE + index * ENTRY_SIZE + SLOT_SIZE;
+    Some(&*(data.as_ptr().add(hash_offset) as *const [u8; HASH_BYTES]))
 }
 
 /// Gets a reference to the `SlotHashEntry` at a specific index from a raw byte slice **without validation**.
@@ -317,93 +319,14 @@ pub unsafe fn get_entry_from_slice_unchecked(data: &[u8], index: usize) -> &Slot
     &*(entry_bytes.as_ptr() as *const SlotHashEntry)
 }
 
-/// Iterator over the entries in `SlotHashes`.
-///
-/// Yields references `&'s SlotHashEntry` tied to the lifetime `'s` of the borrow
-/// of the `SlotHashes` instance.
-pub struct SlotHashesIterator<'s, T>
-where
-    T: Deref<Target = [u8]>,
-{
-    slot_hashes: &'s SlotHashes<T>,
-    current_index: usize,
-}
-
-// Implement Iterator trait for the custom iterator struct
-// TODO: trait extension for unchecked Iterator::next()
-impl<'s, T> Iterator for SlotHashesIterator<'s, T>
-where
-    T: Deref<Target = [u8]>,
-{
+impl<'s> IntoIterator for &'s SlotHashes<'s> {
     type Item = &'s SlotHashEntry;
+    type IntoIter = core::slice::Iter<'s, SlotHashEntry>;
 
-    fn next(&mut self) -> Option<Self::Item> {
-        // Use safe get_entry method from SlotHashes
-        let entry = self.slot_hashes.get_entry(self.current_index);
-        if entry.is_some() {
-            self.current_index += 1;
-        }
-        entry
-    }
-
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        let remaining = self.slot_hashes.len().saturating_sub(self.current_index);
-        (remaining, Some(remaining))
-    }
-}
-
-// Implement ExactSizeIterator as we know the exact length
-impl<T> ExactSizeIterator for SlotHashesIterator<'_, T> where T: Deref<Target = [u8]> {}
-
-// Implement IntoIterator for references to SlotHashes
-// This allows using `for entry in &slot_hashes { ... }`
-impl<'s, T> IntoIterator for &'s SlotHashes<T>
-where
-    T: Deref<Target = [u8]>,
-{
-    type Item = &'s SlotHashEntry;
-    type IntoIter = SlotHashesIterator<'s, T>;
-
+    #[inline(always)]
     fn into_iter(self) -> Self::IntoIter {
-        SlotHashesIterator {
-            slot_hashes: self,
-            current_index: 0,
-        }
+        self.as_entries_slice().iter()
     }
-}
-
-#[inline(always)]
-unsafe fn core_binary_search<FFirstSlot, FSlotAtIndex>(
-    target_slot: Slot,
-    num_entries: usize,
-    _get_first_slot: FFirstSlot,
-    get_slot_at_index: FSlotAtIndex,
-) -> Option<usize>
-where
-    FFirstSlot: FnOnce() -> Slot,
-    FSlotAtIndex: Fn(usize) -> Slot,
-{
-    if num_entries == 0 {
-        return None;
-    }
-
-    let mut low = 0;
-    let mut high = num_entries;
-
-    // Standard Naive Binary Search Loop
-    while low < high {
-        let mid_idx = low + (high - low) / 2; // Naive midpoint
-        let entry_slot = get_slot_at_index(mid_idx);
-
-        match entry_slot.cmp(&target_slot) {
-            core::cmp::Ordering::Equal => return Some(mid_idx),
-            // Remember: SlotHashes are stored in descending order
-            core::cmp::Ordering::Less => high = mid_idx, // entry_slot < target_slot => Target is in lower indices (left half)
-            core::cmp::Ordering::Greater => low = mid_idx + 1, // entry_slot > target_slot => Target is in higher indices (right half)
-        }
-    }
-
-    None // Not found
 }
 
 #[cfg(test)]
@@ -523,30 +446,29 @@ mod tests {
             let data = create_mock_data(&mock_entries);
 
             // Test the safe count getter
-            let result = SlotHashes::<&[u8]>::get_entry_count(&data);
+            let result = SlotHashes::get_entry_count(&data);
             assert!(result.is_ok());
             let len = result.unwrap();
             assert_eq!(len, 3);
 
             // Test the unsafe count getter
-            let unsafe_len = unsafe { SlotHashes::<&[u8]>::get_entry_count_unchecked(&data) };
+            let unsafe_len = unsafe { SlotHashes::get_entry_count_unchecked(&data) };
             assert_eq!(unsafe_len, 3);
 
-            assert!(SlotHashes::<&[u8]>::get_entry_count(&data[0..NUM_ENTRIES_SIZE - 1]).is_err());
-            assert!(SlotHashes::<&[u8]>::get_entry_count(
+            assert!(SlotHashes::get_entry_count(&data[0..NUM_ENTRIES_SIZE - 1]).is_err());
+            assert!(SlotHashes::get_entry_count(
                 &data[0..NUM_ENTRIES_SIZE + 2 * ENTRY_SIZE]
             )
             .is_err());
-            assert!(SlotHashes::<&[u8]>::get_entry_count(
+            assert!(SlotHashes::get_entry_count(
                 &data[0..NUM_ENTRIES_SIZE + 3 * ENTRY_SIZE]
             )
             .is_ok());
 
             let empty_data = create_mock_data(&[]);
-            let empty_len = SlotHashes::<&[u8]>::get_entry_count(&empty_data).unwrap();
+            let empty_len = SlotHashes::get_entry_count(&empty_data).unwrap();
             assert_eq!(empty_len, 0);
-            let unsafe_empty_len =
-                unsafe { SlotHashes::<&[u8]>::get_entry_count_unchecked(&empty_data) };
+            let unsafe_empty_len = unsafe { SlotHashes::get_entry_count_unchecked(&empty_data) };
             assert_eq!(unsafe_empty_len, 0);
         }
 
@@ -558,7 +480,7 @@ mod tests {
                 generate_mock_entries(NUM_ENTRIES, START_SLOT, DecrementStrategy::Average1_05);
             let mock_data = create_mock_data(&mock_entries);
             let count = mock_entries.len();
-            let slot_hashes = unsafe { SlotHashes::new_unchecked(mock_data.as_slice(), count) };
+            let slot_hashes = unsafe { SlotHashes::new_unchecked_slice(mock_data.as_slice(), count) };
 
             let first_slot = mock_entries[0].0;
             let last_slot = mock_entries[NUM_ENTRIES - 1].0;
@@ -597,7 +519,7 @@ mod tests {
 
             // Test empty
             let empty_data = create_mock_data(&[]);
-            let empty_hashes = unsafe { SlotHashes::new_unchecked(empty_data.as_slice(), 0) };
+            let empty_hashes = unsafe { SlotHashes::new_unchecked_slice(empty_data.as_slice(), 0) };
             assert_eq!(empty_hashes.position(100), None);
         }
 
@@ -609,7 +531,7 @@ mod tests {
                 generate_mock_entries(NUM_ENTRIES, START_SLOT, DecrementStrategy::Strictly1);
             let data = create_mock_data(&mock_entries);
             let count = mock_entries.len();
-            let slot_hashes = unsafe { SlotHashes::new_unchecked(data.as_slice(), count) };
+            let slot_hashes = unsafe { SlotHashes::new_unchecked_slice(data.as_slice(), count) };
 
             // Test len() and is_empty()
             assert_eq!(slot_hashes.len(), NUM_ENTRIES);
@@ -655,7 +577,7 @@ mod tests {
 
             // Test empty case
             let empty_data = create_mock_data(&[]);
-            let empty_hashes = unsafe { SlotHashes::new_unchecked(empty_data.as_slice(), 0) };
+            let empty_hashes = unsafe { SlotHashes::new_unchecked_slice(empty_data.as_slice(), 0) };
             assert_eq!(empty_hashes.len(), 0);
             assert!(empty_hashes.is_empty());
             assert!(empty_hashes.get_entry(0).is_none());
@@ -668,26 +590,25 @@ mod tests {
             let data = create_mock_data(&mock_entries);
 
             // Valid data
-            let count_res = SlotHashes::<&[u8]>::get_entry_count(&data);
+            let count_res = SlotHashes::get_entry_count(&data);
             assert!(count_res.is_ok());
             assert_eq!(count_res.unwrap(), 2);
 
             // Data too small (less than len prefix)
             let short_data_1 = &data[0..NUM_ENTRIES_SIZE - 1];
-            let res1 = SlotHashes::<&[u8]>::get_entry_count(short_data_1);
+            let res1 = SlotHashes::get_entry_count(short_data_1);
             assert!(matches!(res1, Err(ProgramError::AccountDataTooSmall)));
 
             // Data too small (correct len prefix, but not enough data for entries)
             let short_data_2 = &data[0..NUM_ENTRIES_SIZE + ENTRY_SIZE]; // Only space for 1 entry
-            let res2 = SlotHashes::<&[u8]>::get_entry_count(short_data_2);
+            let res2 = SlotHashes::get_entry_count(short_data_2);
             assert!(matches!(res2, Err(ProgramError::InvalidAccountData)));
-            let count_res_unchecked_2 =
-                unsafe { SlotHashes::<&[u8]>::get_entry_count_unchecked(short_data_2) };
+            let count_res_unchecked_2 = unsafe { SlotHashes::get_entry_count_unchecked(short_data_2) };
             assert_eq!(count_res_unchecked_2, 2);
 
             // Empty data is valid
             let empty_data = create_mock_data(&[]);
-            let empty_res = SlotHashes::<&[u8]>::get_entry_count(&empty_data);
+            let empty_res = SlotHashes::get_entry_count(&empty_data);
             assert!(empty_res.is_ok());
             assert_eq!(empty_res.unwrap(), 0);
         }
@@ -696,7 +617,7 @@ mod tests {
         fn test_get_entry_unchecked() {
             let mock_entries = generate_mock_entries(1, 100, DecrementStrategy::Strictly1);
             let data = create_mock_data(&mock_entries);
-            let slot_hashes = unsafe { SlotHashes::new_unchecked(data.as_slice(), 1) };
+            let slot_hashes = unsafe { SlotHashes::new_unchecked_slice(data.as_slice(), 1) };
 
             // Safety: index 0 is valid because len is 1
             let entry = unsafe { slot_hashes.get_entry_unchecked(0) };
@@ -798,6 +719,25 @@ mod tests {
                 // Calling get_entry_from_slice_unchecked with index 0 on empty data is UB, not tested.
             }
         }
+
+        #[test]
+        fn test_iterator_into_ref() {
+            let entries = generate_mock_entries(10, 50, DecrementStrategy::Strictly1);
+            let data = create_mock_data(&entries);
+            let sh = unsafe { SlotHashes::new_unchecked_slice(data.as_slice(), entries.len()) };
+
+            // Iterate by shared reference (uses our IntoIterator impl for &SlotHashes)
+            let mut collected: Vec<u64> = Vec::new();
+            for e in &sh { // implicitly invokes into_iter(&sh)
+                collected.push(e.slot);
+            }
+            let expected: Vec<u64> = entries.iter().map(|(s, _)| *s).collect();
+            assert_eq!(collected, expected);
+
+            // slice::Iter implements ExactSizeIterator; confirm len() matches.
+            let iter = (&sh).into_iter();
+            assert_eq!(iter.len(), sh.len());
+        }
     }
 
     #[derive(Clone, Copy, Debug)]
@@ -834,7 +774,7 @@ mod tests {
         let last_slot = entries[entry_count - 1].0;
 
         // Create SlotHashes using the unsafe constructor with a slice
-        let slot_hashes = unsafe { SlotHashes::new_unchecked(data.as_slice(), entry_count) };
+        let slot_hashes = unsafe { SlotHashes::new_unchecked_slice(data.as_slice(), entry_count) };
 
         // Test the default (interpolation) binary search algorithm
         assert_eq!(slot_hashes.position(first_slot), Some(0));
@@ -883,7 +823,7 @@ mod tests {
         // Test empty list explicitly
         let empty_entries = generate_mock_entries(0, START_SLOT, DecrementStrategy::Strictly1);
         let empty_data = create_mock_data(&empty_entries);
-        let empty_hashes = unsafe { SlotHashes::new_unchecked(empty_data.as_slice(), 0) };
+        let empty_hashes = unsafe { SlotHashes::new_unchecked_slice(empty_data.as_slice(), 0) };
         assert_eq!(empty_hashes.get_hash(100), None);
 
         let pos_start_plus_1 = slot_hashes.position(START_SLOT + 1);
@@ -900,7 +840,7 @@ mod tests {
         const START_SLOT: u64 = 2000;
         let entries = generate_mock_entries(NUM_ENTRIES, START_SLOT, DecrementStrategy::Strictly1);
         let data = create_mock_data(&entries);
-        let slot_hashes = unsafe { SlotHashes::new_unchecked(data.as_slice(), NUM_ENTRIES) };
+        let slot_hashes = unsafe { SlotHashes::new_unchecked_slice(data.as_slice(), NUM_ENTRIES) };
 
         // Test len() and is_empty()
         assert_eq!(slot_hashes.len(), NUM_ENTRIES);
@@ -945,7 +885,7 @@ mod tests {
 
         // Test empty case
         let empty_data = create_mock_data(&[]);
-        let empty_hashes = unsafe { SlotHashes::new_unchecked(empty_data.as_slice(), 0) };
+        let empty_hashes = unsafe { SlotHashes::new_unchecked_slice(empty_data.as_slice(), 0) };
         assert_eq!(empty_hashes.len(), 0);
         assert!(empty_hashes.is_empty());
         assert!(empty_hashes.get_entry(0).is_none());
@@ -969,36 +909,33 @@ mod tests {
             cursor += HASH_BYTES;
         }
         let data_slice = &raw_data[..cursor];
-        let count_res = SlotHashes::<&[u8]>::get_entry_count(data_slice);
+        let count_res = SlotHashes::get_entry_count(data_slice);
         assert!(count_res.is_ok());
         assert_eq!(count_res.unwrap(), 2);
-        let count_res_unchecked =
-            unsafe { SlotHashes::<&[u8]>::get_entry_count_unchecked(data_slice) };
+        let count_res_unchecked = unsafe { SlotHashes::get_entry_count_unchecked(data_slice) };
         assert_eq!(count_res_unchecked, 2);
 
         // Data too small (less than len prefix)
         let short_data_1 = &data_slice[0..NUM_ENTRIES_SIZE - 1];
-        let res1 = SlotHashes::<&[u8]>::get_entry_count(short_data_1);
+        let res1 = SlotHashes::get_entry_count(short_data_1);
         assert!(matches!(res1, Err(ProgramError::AccountDataTooSmall)));
 
         // Data too small (correct len prefix, but not enough data for entries)
         let short_data_2 = &data_slice[0..NUM_ENTRIES_SIZE + ENTRY_SIZE]; // Only space for 1 entry
-        let res2 = SlotHashes::<&[u8]>::get_entry_count(short_data_2);
+        let res2 = SlotHashes::get_entry_count(short_data_2);
         assert!(matches!(res2, Err(ProgramError::InvalidAccountData)));
-        let count_res_unchecked_2 =
-            unsafe { SlotHashes::<&[u8]>::get_entry_count_unchecked(short_data_2) };
+        let count_res_unchecked_2 = unsafe { SlotHashes::get_entry_count_unchecked(short_data_2) };
         assert_eq!(count_res_unchecked_2, 2);
 
         // Empty data is valid
         let empty_num_bytes = (0u64).to_le_bytes();
         let mut empty_raw_data = [0u8; NUM_ENTRIES_SIZE];
         empty_raw_data[..NUM_ENTRIES_SIZE].copy_from_slice(&empty_num_bytes);
-        let empty_res = SlotHashes::<&[u8]>::get_entry_count(empty_raw_data.as_slice());
+        let empty_res = SlotHashes::get_entry_count(empty_raw_data.as_slice());
         assert!(empty_res.is_ok());
         assert_eq!(empty_res.unwrap(), 0);
-        let empty_res_unchecked =
-            unsafe { SlotHashes::<&[u8]>::get_entry_count_unchecked(empty_raw_data.as_slice()) };
-        assert_eq!(empty_res_unchecked, 0);
+        let unsafe_empty_len = unsafe { SlotHashes::get_entry_count_unchecked(empty_raw_data.as_slice()) };
+        assert_eq!(unsafe_empty_len, 0);
     }
 
     #[test]
@@ -1011,11 +948,31 @@ mod tests {
         raw_data_1[NUM_ENTRIES_SIZE..NUM_ENTRIES_SIZE + SLOT_SIZE]
             .copy_from_slice(&single_entry[0].0.to_le_bytes());
         raw_data_1[NUM_ENTRIES_SIZE + SLOT_SIZE..].copy_from_slice(single_entry[0].1.as_ref());
-        let slot_hashes = unsafe { SlotHashes::new_unchecked(&raw_data_1[..], 1) };
+        let slot_hashes = unsafe { SlotHashes::new_unchecked_slice(&raw_data_1[..], 1) };
 
         // Safety: index 0 is valid because len is 1
         let entry = unsafe { slot_hashes.get_entry_unchecked(0) };
         assert_eq!(entry.slot, 100);
         assert_eq!(entry.hash, [1u8; HASH_BYTES]);
+    }
+
+    #[test]
+    fn test_iterator_into_ref_no_std() {
+        const NUM: usize = 16;
+        const START: u64 = 100;
+        let entries = generate_mock_entries(NUM, START, DecrementStrategy::Strictly1);
+        let data = create_mock_data(&entries);
+        let sh = unsafe { SlotHashes::new_unchecked_slice(data.as_slice(), NUM) };
+
+        // Collect slots via iterator
+        let mut sum: u64 = 0;
+        for e in &sh {
+            sum += e.slot;
+        }
+        let expected_sum: u64 = entries.iter().map(|(s, _)| *s).sum();
+        assert_eq!(sum, expected_sum);
+
+        let iter = (&sh).into_iter();
+        assert_eq!(iter.len(), sh.len());
     }
 }
