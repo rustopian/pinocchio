@@ -71,8 +71,9 @@ impl<T: Deref<Target = [u8]>> SlotHashes<T> {
         if data.len() < NUM_ENTRIES_SIZE {
             return Err(ProgramError::AccountDataTooSmall);
         }
-        let num_entries =
-            unsafe { ptr::read_unaligned(data.as_ptr() as *const u64) }.to_le() as usize;
+        let num_entries = unsafe {
+            u64::from_le_bytes(*(data.as_ptr() as *const [u8; 8]))
+        } as usize;
 
         // Reject oversized accounts so callers are not
         // surprised by silently truncated results.
@@ -108,7 +109,7 @@ impl<T: Deref<Target = [u8]>> SlotHashes<T> {
     ///    (out-of-bounds access) or incorrect results.
     #[inline(always)]
     pub unsafe fn get_entry_count_unchecked(data: &[u8]) -> usize {
-        ptr::read_unaligned(data.as_ptr() as *const u64).to_le() as usize
+        u64::from_le_bytes(*(data.as_ptr() as *const [u8; 8])) as usize
     }
 
     /// Returns the number of `SlotHashEntry` items accessible.
