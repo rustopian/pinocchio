@@ -33,35 +33,13 @@ pub struct SlotHashEntry {
     pub hash: [u8; HASH_BYTES],
 }
 
-/// Provides zero-copy access to the data of the `SlotHashes` sysvar.
-///
-/// Internally it keeps either a plain slice `&'a [u8]` *or* the `Ref<'a, [u8]>`
-/// returned by `AccountInfo::try_borrow_data()`.  Holding the `Ref` variant is
-/// important because dropping the `Ref` would release the runtime borrow while
-/// users still hold `&[u8]` references obtained from the struct.
-enum Data<'a> {
-    Slice(&'a [u8]),
-    Ref(Ref<'a, [u8]>),
-}
-
-impl core::ops::Deref for Data<'_> {
-    type Target = [u8];
-    #[inline(always)]
-    fn deref(&self) -> &Self::Target {
-        match self {
-            Data::Slice(s) => s,
-            Data::Ref(r) => r,
-        }
-    }
-}
-
 /// SlotHashes provides read-only, zero-copy access to SlotHashes sysvar bytes.
-pub struct SlotHashes<'a> {
-    data: Data<'a>,
+pub struct SlotHashes<T: Deref<Target = [u8]>> {
+    data: T,
     len: usize,
 }
 
-impl<'a> SlotHashes<'a> {
+impl<T: Deref<Target = [u8]>> SlotHashes<T> {
     /// Creates a `SlotHashes` instance directly from a data container and entry count.
     /// Important: provide a valid len. Whether or not len is assumed to be
     /// the constant 20_488 (512 entries) is up to caller.
@@ -78,36 +56,8 @@ impl<'a> SlotHashes<'a> {
     /// 5. Alignment is correct.
     ///
     #[inline(always)]
-    pub unsafe fn new_unchecked_slice(data: &'a [u8], len: usize) -> Self {
-        SlotHashes {
-            data: Data::Slice(data),
-            len,
-        }
-    }
-
-    /// Same as `new_unchecked_slice` but keeps the `Ref` so the runtime borrow
-    /// is held for the lifetime of the `SlotHashes` instance.
-    ///
-    /// # Safety
-    ///
-    /// Items 2 and 4 are normally auto-satisfied in Solana program contexts.
-    ///
-    /// 1. `data` must point to a byte slice that represents **valid** SlotHashes
-    ///    contents for exactly `len` entries (i.e. it was previously validated, or
-    ///    the caller otherwise guarantees correctness).
-    /// 2. The memory backing `data` must remain valid for the entire lifetime `'a`
-    ///    of the returned `SlotHashes` value.
-    /// 3. The pointer in `data` must be correctly aligned for `SlotHashEntry` so
-    ///    that later reference casts are sound.
-    /// 4. Because a [`Ref`] is handed in, the caller must ensure the runtime
-    ///    borrow rules are respected (no mutable aliasing etc.) for as long as
-    ///    the returned `SlotHashes` exists.
-    #[inline(always)]
-    pub unsafe fn new_unchecked_ref(data: Ref<'a, [u8]>, len: usize) -> Self {
-        SlotHashes {
-            data: Data::Ref(data),
-            len,
-        }
+    pub unsafe fn new_unchecked(data: T, len: usize) -> Self {
+        SlotHashes { data, len }
     }
 
     /// Parses the length prefix of a SlotHashes account and validates that the
@@ -235,8 +185,37 @@ impl<'a> SlotHashes<'a> {
     }
 }
 
-// Implementation block specific to the safe Ref version
-impl<'a> SlotHashes<'a> {
+impl<'a, T: Deref<Target = [u8]>> IntoIterator for &'a SlotHashes<T> {
+    type Item = &'a SlotHashEntry;
+    type IntoIter = core::slice::Iter<'a, SlotHashEntry>;
+
+    #[inline(always)]
+    fn into_iter(self) -> Self::IntoIter {
+        self.as_entries_slice().iter()
+    }
+}
+
+impl<'a> SlotHashes<&'a [u8]> {
+    /// Creates a `SlotHashes` instance directly from a slice and entry count.
+    ///
+    /// # Safety
+    ///
+    /// This function is unsafe because it does not check the validity of the data or count.
+    /// The caller must ensure:
+    /// 1. The underlying byte slice represents valid SlotHashes data
+    ///    (length prefix + entries).
+    /// 2. `len` is the correct number of entries (≤ MAX_ENTRIES), matching the prefix.
+    /// 3. The data slice contains at least `NUM_ENTRIES_SIZE + len * ENTRY_SIZE` bytes.
+    /// 4. The slice remains valid for the lifetime of the returned `SlotHashes`.
+    /// 5. Alignment is correct.
+    ///
+    #[inline(always)]
+    pub unsafe fn new_unchecked_slice(data: &'a [u8], len: usize) -> Self {
+        unsafe { Self::new_unchecked(data, len) }
+    }
+}
+
+impl<'a> SlotHashes<Ref<'a, [u8]>> {
     /// Creates a `SlotHashes` instance by safely borrowing data from an `AccountInfo`.
     ///
     /// This function verifies that:
@@ -257,7 +236,7 @@ impl<'a> SlotHashes<'a> {
 
         let num_entries = Self::parse_and_validate_data(&data_ref)?;
 
-        Ok(unsafe { Self::new_unchecked_ref(data_ref, num_entries) })
+        Ok(unsafe { Self::new_unchecked(data_ref, num_entries) })
     }
 }
 
@@ -291,7 +270,7 @@ pub unsafe fn position_from_slice_binary_search_unchecked(
     num_entries: usize,
 ) -> Option<usize> {
     // caller promises `data` is large enough and properly formatted
-    SlotHashes::new_unchecked_slice(data, num_entries).position(target_slot)
+    SlotHashes::new_unchecked(data, num_entries).position(target_slot)
 }
 
 /// Gets a reference to the hash for a specific slot from a raw byte slice **without validation**.
@@ -320,16 +299,6 @@ pub unsafe fn get_entry_from_slice_unchecked(data: &[u8], index: usize) -> &Slot
     let entry_offset = NUM_ENTRIES_SIZE + index * ENTRY_SIZE;
     let entry_bytes = data.get_unchecked(entry_offset..(entry_offset + ENTRY_SIZE));
     &*(entry_bytes.as_ptr() as *const SlotHashEntry)
-}
-
-impl<'s> IntoIterator for &'s SlotHashes<'s> {
-    type Item = &'s SlotHashEntry;
-    type IntoIter = core::slice::Iter<'s, SlotHashEntry>;
-
-    #[inline(always)]
-    fn into_iter(self) -> Self::IntoIter {
-        self.as_entries_slice().iter()
-    }
 }
 
 #[cfg(test)]
@@ -713,33 +682,35 @@ mod tests {
             cursor += HASH_BYTES;
         }
         let data_slice = &raw_data[..cursor];
-        let count_res = SlotHashes::get_entry_count(data_slice);
+        let count_res = SlotHashes::<&[u8]>::get_entry_count(data_slice);
         assert!(count_res.is_ok());
         assert_eq!(count_res.unwrap(), 2);
-        let count_res_unchecked = unsafe { SlotHashes::get_entry_count_unchecked(data_slice) };
+        let count_res_unchecked =
+            unsafe { SlotHashes::<&[u8]>::get_entry_count_unchecked(data_slice) };
         assert_eq!(count_res_unchecked, 2);
 
         // Data too small (less than len prefix)
         let short_data_1 = &data_slice[0..NUM_ENTRIES_SIZE - 1];
-        let res1 = SlotHashes::get_entry_count(short_data_1);
+        let res1 = SlotHashes::<&[u8]>::get_entry_count(short_data_1);
         assert!(matches!(res1, Err(ProgramError::AccountDataTooSmall)));
 
         // Data too small (correct len prefix, but not enough data for entries)
         let short_data_2 = &data_slice[0..NUM_ENTRIES_SIZE + ENTRY_SIZE]; // Only space for 1 entry
-        let res2 = SlotHashes::get_entry_count(short_data_2);
+        let res2 = SlotHashes::<&[u8]>::get_entry_count(short_data_2);
         assert!(matches!(res2, Err(ProgramError::InvalidAccountData)));
-        let count_res_unchecked_2 = unsafe { SlotHashes::get_entry_count_unchecked(short_data_2) };
+        let count_res_unchecked_2 =
+            unsafe { SlotHashes::<&[u8]>::get_entry_count_unchecked(short_data_2) };
         assert_eq!(count_res_unchecked_2, 2);
 
         // Empty data is valid
         let empty_num_bytes = (0u64).to_le_bytes();
         let mut empty_raw_data = [0u8; NUM_ENTRIES_SIZE];
         empty_raw_data[..NUM_ENTRIES_SIZE].copy_from_slice(&empty_num_bytes);
-        let empty_res = SlotHashes::get_entry_count(empty_raw_data.as_slice());
+        let empty_res = SlotHashes::<&[u8]>::get_entry_count(empty_raw_data.as_slice());
         assert!(empty_res.is_ok());
         assert_eq!(empty_res.unwrap(), 0);
         let unsafe_empty_len =
-            unsafe { SlotHashes::get_entry_count_unchecked(empty_raw_data.as_slice()) };
+            unsafe { SlotHashes::<&[u8]>::get_entry_count_unchecked(empty_raw_data.as_slice()) };
         assert_eq!(unsafe_empty_len, 0);
     }
 
@@ -853,7 +824,7 @@ mod edge_tests {
     fn too_many_entries_rejected() {
         let bytes = raw_slot_hashes((MAX_ENTRIES as u64) + 1, &[]);
         assert!(matches!(
-            SlotHashes::get_entry_count(&bytes),
+            SlotHashes::<&[u8]>::get_entry_count(&bytes),
             Err(ProgramError::InvalidAccountData)
         ));
     }
@@ -863,7 +834,7 @@ mod edge_tests {
         let entry = (123u64, [7u8; HASH_BYTES]);
         let bytes = raw_slot_hashes(2, &[entry]); // says 2 but provides 1
         assert!(matches!(
-            SlotHashes::get_entry_count(&bytes),
+            SlotHashes::<&[u8]>::get_entry_count(&bytes),
             Err(ProgramError::InvalidAccountData)
         ));
     }
@@ -876,7 +847,7 @@ mod edge_tests {
             (199, [2u8; HASH_BYTES]),
         ];
         let bytes = raw_slot_hashes(entries.len() as u64, entries);
-        let sh = unsafe { SlotHashes::new_unchecked_slice(&bytes, entries.len()) };
+        let sh = unsafe { SlotHashes::new_unchecked(&bytes[..], entries.len()) };
         let dup_pos = sh.position(200).expect("slot 200 must exist");
         assert!(
             dup_pos <= 1,
@@ -888,7 +859,7 @@ mod edge_tests {
     #[test]
     fn zero_len_minimal_slice_iterates_empty() {
         let zero_bytes = 0u64.to_le_bytes();
-        let sh = unsafe { SlotHashes::new_unchecked_slice(&zero_bytes, 0) };
+        let sh = unsafe { SlotHashes::new_unchecked(&zero_bytes[..], 0) };
         assert_eq!(sh.len(), 0);
         assert!(sh.into_iter().next().is_none());
     }
