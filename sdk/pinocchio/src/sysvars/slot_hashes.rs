@@ -195,26 +195,6 @@ impl<'a, T: Deref<Target = [u8]>> IntoIterator for &'a SlotHashes<T> {
     }
 }
 
-impl<'a> SlotHashes<&'a [u8]> {
-    /// Creates a `SlotHashes` instance directly from a slice and entry count.
-    ///
-    /// # Safety
-    ///
-    /// This function is unsafe because it does not check the validity of the data or count.
-    /// The caller must ensure:
-    /// 1. The underlying byte slice represents valid SlotHashes data
-    ///    (length prefix + entries).
-    /// 2. `len` is the correct number of entries (≤ MAX_ENTRIES), matching the prefix.
-    /// 3. The data slice contains at least `NUM_ENTRIES_SIZE + len * ENTRY_SIZE` bytes.
-    /// 4. The slice remains valid for the lifetime of the returned `SlotHashes`.
-    /// 5. Alignment is correct.
-    ///
-    #[inline(always)]
-    pub unsafe fn new_unchecked_slice(data: &'a [u8], len: usize) -> Self {
-        unsafe { Self::new_unchecked(data, len) }
-    }
-}
-
 impl<'a> SlotHashes<Ref<'a, [u8]>> {
     /// Creates a `SlotHashes` instance by safely borrowing data from an `AccountInfo`.
     ///
@@ -416,7 +396,7 @@ mod tests {
         fn test_iterator_into_ref() {
             let entries = generate_mock_entries(10, 50, DecrementStrategy::Strictly1);
             let data = create_mock_data(&entries);
-            let sh = unsafe { SlotHashes::new_unchecked_slice(data.as_slice(), entries.len()) };
+            let sh = unsafe { SlotHashes::new_unchecked(data.as_slice(), entries.len()) };
 
             let mut collected: Vec<u64> = Vec::new();
             for e in &sh {
@@ -547,7 +527,7 @@ mod tests {
         let last_slot = entries[entry_count - 1].0;
 
         // Create SlotHashes using the unsafe constructor with a slice
-        let slot_hashes = unsafe { SlotHashes::new_unchecked_slice(data.as_slice(), entry_count) };
+        let slot_hashes = unsafe { SlotHashes::new_unchecked(data.as_slice(), entry_count) };
 
         // Test the default (interpolation) binary search algorithm
         assert_eq!(slot_hashes.position(first_slot), Some(0));
@@ -596,7 +576,7 @@ mod tests {
         // Test empty list explicitly
         let empty_entries = generate_mock_entries(0, START_SLOT, DecrementStrategy::Strictly1);
         let empty_data = create_mock_data(&empty_entries);
-        let empty_hashes = unsafe { SlotHashes::new_unchecked_slice(empty_data.as_slice(), 0) };
+        let empty_hashes = unsafe { SlotHashes::new_unchecked(empty_data.as_slice(), 0) };
         assert_eq!(empty_hashes.get_hash(100), None);
 
         let pos_start_plus_1 = slot_hashes.position(START_SLOT + 1);
@@ -613,7 +593,7 @@ mod tests {
         const START_SLOT: u64 = 2000;
         let entries = generate_mock_entries(NUM_ENTRIES, START_SLOT, DecrementStrategy::Strictly1);
         let data = create_mock_data(&entries);
-        let slot_hashes = unsafe { SlotHashes::new_unchecked_slice(data.as_slice(), NUM_ENTRIES) };
+        let slot_hashes = unsafe { SlotHashes::new_unchecked(data.as_slice(), NUM_ENTRIES) };
 
         // Test len() and is_empty()
         assert_eq!(slot_hashes.len(), NUM_ENTRIES);
@@ -658,7 +638,7 @@ mod tests {
 
         // Test empty case
         let empty_data = create_mock_data(&[]);
-        let empty_hashes = unsafe { SlotHashes::new_unchecked_slice(empty_data.as_slice(), 0) };
+        let empty_hashes = unsafe { SlotHashes::new_unchecked(empty_data.as_slice(), 0) };
         assert_eq!(empty_hashes.len(), 0);
         assert!(empty_hashes.is_empty());
         assert!(empty_hashes.get_entry(0).is_none());
@@ -724,7 +704,7 @@ mod tests {
         raw_data_1[NUM_ENTRIES_SIZE..NUM_ENTRIES_SIZE + SLOT_SIZE]
             .copy_from_slice(&single_entry[0].0.to_le_bytes());
         raw_data_1[NUM_ENTRIES_SIZE + SLOT_SIZE..].copy_from_slice(single_entry[0].1.as_ref());
-        let slot_hashes = unsafe { SlotHashes::new_unchecked_slice(&raw_data_1[..], 1) };
+        let slot_hashes = unsafe { SlotHashes::new_unchecked(raw_data_1.as_slice(), 1) };
 
         // Safety: index 0 is valid because len is 1
         let entry = unsafe { slot_hashes.get_entry_unchecked(0) };
@@ -738,7 +718,7 @@ mod tests {
         const START: u64 = 100;
         let entries = generate_mock_entries(NUM, START, DecrementStrategy::Strictly1);
         let data = create_mock_data(&entries);
-        let sh = unsafe { SlotHashes::new_unchecked_slice(data.as_slice(), NUM) };
+        let sh = unsafe { SlotHashes::new_unchecked(data.as_slice(), NUM) };
 
         // Collect slots via iterator
         let mut sum: u64 = 0;
