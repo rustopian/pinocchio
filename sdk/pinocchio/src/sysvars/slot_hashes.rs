@@ -6,7 +6,7 @@ use crate::{
     pubkey::Pubkey,
     sysvars::clock::Slot,
 };
-use core::{mem, ops::Deref, ptr};
+use core::{mem, ops::Deref};
 
 /// SysvarS1otHashes111111111111111111111111111
 pub const SLOTHASHES_ID: Pubkey = [
