@@ -27,10 +27,18 @@ pub const ENTRY_SIZE: usize = SLOT_SIZE + HASH_BYTES;
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 #[repr(C)]
 pub struct SlotHashEntry {
-    /// The slot number.
-    pub slot: Slot,
+    /// The slot number stored as little-endian bytes.
+    slot_le: [u8; 8],
     /// The hash corresponding to the slot.
     pub hash: [u8; HASH_BYTES],
+}
+
+impl SlotHashEntry {
+    /// Returns the slot number as a u64.
+    #[inline(always)]
+    pub fn slot(&self) -> Slot {
+        u64::from_le_bytes(self.slot_le)
+    }
 }
 
 /// SlotHashes provides read-only, zero-copy access to SlotHashes sysvar bytes.
@@ -149,7 +157,7 @@ impl<T: Deref<Target = [u8]>> SlotHashes<T> {
     pub fn get_hash(&self, target_slot: Slot) -> Option<&[u8; HASH_BYTES]> {
         let entries = self.as_entries_slice();
         entries
-            .binary_search_by(|probe_entry| probe_entry.slot.cmp(&target_slot).reverse())
+            .binary_search_by(|probe_entry| probe_entry.slot().cmp(&target_slot).reverse())
             .ok()
             .map(|index| &entries[index].hash)
     }
@@ -162,7 +170,7 @@ impl<T: Deref<Target = [u8]>> SlotHashes<T> {
     pub fn position(&self, target_slot: Slot) -> Option<usize> {
         let entries = self.as_entries_slice();
         entries
-            .binary_search_by(|probe_entry| probe_entry.slot.cmp(&target_slot).reverse())
+            .binary_search_by(|probe_entry| probe_entry.slot().cmp(&target_slot).reverse())
             .ok()
     }
 
@@ -235,7 +243,7 @@ mod tests {
         assert_eq!(HASH_BYTES, 32);
         assert_eq!(ENTRY_SIZE, size_of::<u64>() + 32);
         assert_eq!(size_of::<SlotHashEntry>(), ENTRY_SIZE);
-        assert_eq!(align_of::<SlotHashEntry>(), align_of::<u64>());
+        assert_eq!(align_of::<SlotHashEntry>(), align_of::<[u8; 8]>());
         assert_eq!(
             SLOTHASHES_ID,
             [
@@ -339,7 +347,7 @@ mod tests {
 
             let mut collected: Vec<u64> = Vec::new();
             for e in &sh {
-                collected.push(e.slot);
+                collected.push(e.slot());
             }
             let expected: Vec<u64> = entries.iter().map(|(s, _)| *s).collect();
             assert_eq!(collected, expected);
@@ -426,7 +434,7 @@ mod tests {
             // Basic sanity checks on the returned view.
             assert_eq!(slot_hashes.len(), NUM_ENTRIES);
             for (i, entry) in slot_hashes.into_iter().enumerate() {
-                assert_eq!(entry.slot, mock_entries[i].0);
+                assert_eq!(entry.slot(), mock_entries[i].0);
                 assert_eq!(entry.hash, mock_entries[i].1);
             }
         }
@@ -541,20 +549,20 @@ mod tests {
         // Test get_entry()
         let entry0 = slot_hashes.get_entry(0);
         assert!(entry0.is_some());
-        assert_eq!(entry0.unwrap().slot, START_SLOT); // Check against start slot
+        assert_eq!(entry0.unwrap().slot(), START_SLOT); // Check against start slot
         assert_eq!(entry0.unwrap().hash, [0u8; HASH_BYTES]); // First generated hash is [0u8; 32]
 
         let entry2 = slot_hashes.get_entry(NUM_ENTRIES - 1); // Last entry
         assert!(entry2.is_some());
         // Check last entry against generated data
-        assert_eq!(entry2.unwrap().slot, entries[NUM_ENTRIES - 1].0);
+        assert_eq!(entry2.unwrap().slot(), entries[NUM_ENTRIES - 1].0);
         assert_eq!(entry2.unwrap().hash, entries[NUM_ENTRIES - 1].1);
         assert!(slot_hashes.get_entry(NUM_ENTRIES).is_none()); // Out of bounds
 
         // Test iterator
         // Use enumerate to avoid clippy lint about indexing
         for (i, entry) in slot_hashes.into_iter().enumerate() {
-            assert_eq!(entry.slot, entries[i].0);
+            assert_eq!(entry.slot(), entries[i].0);
             assert_eq!(entry.hash, entries[i].1);
         }
         // Check that the iterator is exhausted
@@ -647,7 +655,7 @@ mod tests {
 
         // Safety: index 0 is valid because len is 1
         let entry = unsafe { slot_hashes.get_entry_unchecked(0) };
-        assert_eq!(entry.slot, 100);
+        assert_eq!(entry.slot(), 100);
         assert_eq!(entry.hash, [1u8; HASH_BYTES]);
     }
 
@@ -662,7 +670,7 @@ mod tests {
         // Collect slots via iterator
         let mut sum: u64 = 0;
         for e in &sh {
-            sum += e.slot;
+            sum += e.slot();
         }
         let expected_sum: u64 = entries.iter().map(|(s, _)| *s).sum();
         assert_eq!(sum, expected_sum);
