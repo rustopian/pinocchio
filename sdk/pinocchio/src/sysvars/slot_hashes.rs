@@ -77,12 +77,12 @@ impl<T: Deref<Target = [u8]>> SlotHashes<T> {
         // Reject oversized accounts so callers are not
         // surprised by silently truncated results.
         if num_entries > MAX_ENTRIES {
-            return Err(ProgramError::InvalidAccountData);
+            return Err(ProgramError::InvalidArgument);
         }
 
         let required_len = NUM_ENTRIES_SIZE + num_entries * ENTRY_SIZE;
         if data.len() < required_len {
-            return Err(ProgramError::InvalidAccountData);
+            return Err(ProgramError::InvalidArgument);
         }
 
         Ok(num_entries)
@@ -616,7 +616,7 @@ mod tests {
         // Data too small (correct len prefix, but not enough data for entries)
         let short_data_2 = &data_slice[0..NUM_ENTRIES_SIZE + ENTRY_SIZE]; // Only space for 1 entry
         let res2 = SlotHashes::<&[u8]>::get_entry_count(short_data_2);
-        assert!(matches!(res2, Err(ProgramError::InvalidAccountData)));
+        assert!(matches!(res2, Err(ProgramError::InvalidArgument)));
         let count_res_unchecked_2 =
             unsafe { SlotHashes::<&[u8]>::get_entry_count_unchecked(short_data_2) };
         assert_eq!(count_res_unchecked_2, 2);
@@ -744,7 +744,7 @@ mod edge_tests {
         let bytes = raw_slot_hashes((MAX_ENTRIES as u64) + 1, &[]);
         assert!(matches!(
             SlotHashes::<&[u8]>::get_entry_count(&bytes),
-            Err(ProgramError::InvalidAccountData)
+            Err(ProgramError::InvalidArgument)
         ));
     }
 
@@ -754,7 +754,7 @@ mod edge_tests {
         let bytes = raw_slot_hashes(2, &[entry]); // says 2 but provides 1
         assert!(matches!(
             SlotHashes::<&[u8]>::get_entry_count(&bytes),
-            Err(ProgramError::InvalidAccountData)
+            Err(ProgramError::InvalidArgument)
         ));
     }
 
