@@ -220,67 +220,6 @@ impl<'a> SlotHashes<Ref<'a, [u8]>> {
     }
 }
 
-/// Reads the entry count directly from the beginning of a byte slice **without validation**.
-/// (This is identical to the struct method get_entry_count_unchecked,
-/// added here for discoverability with other unchecked fns)
-///
-/// # Safety
-///
-/// This function is unsafe because it performs no checks on the input slice.
-/// The caller **must** ensure that:
-/// 1. `data` contains at least `NUM_ENTRIES_SIZE` (8) bytes.
-/// 2. The first 8 bytes represent a valid `u64` in little-endian format.
-/// 3. Calling this function without ensuring the above may lead to panics
-///    (out-of-bounds access) or incorrect results.
-#[inline(always)]
-pub unsafe fn get_entry_count_from_slice_unchecked(data: &[u8]) -> usize {
-    ptr::read_unaligned(data.as_ptr() as *const u64).to_le() as usize
-}
-
-/// Performs an **unsafe** naive binary search directly on a raw byte slice.
-///
-/// # Safety
-/// Caller must guarantee `data` contains a valid `SlotHashes` structure and that
-/// `num_entries` is the correct count of entries in `data`. It is up to caller whether
-/// to use MAX_ENTRIES or to use a call such as `get_entry_count_from_slice_unchecked`
-#[inline(always)]
-pub unsafe fn position_from_slice_binary_search_unchecked(
-    data: &[u8],
-    target_slot: Slot,
-    num_entries: usize,
-) -> Option<usize> {
-    // caller promises `data` is large enough and properly formatted
-    SlotHashes::new_unchecked(data, num_entries).position(target_slot)
-}
-
-/// Gets a reference to the hash for a specific slot from a raw byte slice **without validation**.
-///
-/// # Safety
-/// Caller must guarantee `data` contains a valid `SlotHashes` structure.
-/// Caller must guarantee `num_entries` is the correct count of entries in `data`. It is up
-/// to caller whether to use MAX_ENTRIES or to use a call such as `get_entry_count_from_slice_unchecked`
-#[inline(always)]
-pub unsafe fn get_hash_from_slice_unchecked(
-    data: &[u8],
-    target_slot: Slot,
-    num_entries: usize,
-) -> Option<&[u8; HASH_BYTES]> {
-    let index = position_from_slice_binary_search_unchecked(data, target_slot, num_entries)?;
-    let hash_offset = NUM_ENTRIES_SIZE + index * ENTRY_SIZE + SLOT_SIZE;
-    Some(&*(data.as_ptr().add(hash_offset) as *const [u8; HASH_BYTES]))
-}
-
-/// Gets a reference to the `SlotHashEntry` at a specific index from a raw byte slice **without validation**.
-///
-/// # Safety
-/// Caller must guarantee `data` contains a valid `SlotHashes` structure and that `index` is less than the entry count derived from the data's prefix.
-#[inline(always)]
-pub unsafe fn get_entry_from_slice_unchecked(data: &[u8], index: usize) -> &SlotHashEntry {
-    let entry_offset = NUM_ENTRIES_SIZE + index * ENTRY_SIZE;
-    let entry_bytes = data.get_unchecked(entry_offset..(entry_offset + ENTRY_SIZE));
-    &*(entry_bytes.as_ptr() as *const SlotHashEntry)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
