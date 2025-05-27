@@ -217,10 +217,6 @@ impl<'a> SlotHashes<Ref<'a, [u8]>> {
         }
 
         let data_ref = account_info.try_borrow_data()?;
-        // Ensure the byte slice is suitably aligned for `SlotHashEntry`
-        if (data_ref.as_ptr() as usize) % mem::align_of::<SlotHashEntry>() != 0 {
-            return Err(ProgramError::InvalidAccountData);
-        }
 
         let num_entries = Self::parse_and_validate_data(&data_ref)?;
 
