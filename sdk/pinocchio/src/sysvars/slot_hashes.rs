@@ -71,9 +71,8 @@ impl<T: Deref<Target = [u8]>> SlotHashes<T> {
         if data.len() < NUM_ENTRIES_SIZE {
             return Err(ProgramError::AccountDataTooSmall);
         }
-        let num_entries = unsafe {
-            u64::from_le_bytes(*(data.as_ptr() as *const [u8; 8]))
-        } as usize;
+        let num_entries =
+            unsafe { u64::from_le_bytes(*(data.as_ptr() as *const [u8; 8])) } as usize;
 
         // Reject oversized accounts so callers are not
         // surprised by silently truncated results.
