@@ -558,13 +558,10 @@ mod tests {
         assert_eq!(entry2.unwrap().hash, entries[NUM_ENTRIES - 1].1);
         assert!(slot_hashes.get_entry(NUM_ENTRIES).is_none()); // Out of bounds
 
-        // Test iterator
-        // Use enumerate to avoid clippy lint about indexing
         for (i, entry) in slot_hashes.into_iter().enumerate() {
             assert_eq!(entry.slot(), entries[i].0);
             assert_eq!(entry.hash, entries[i].1);
         }
-        // Check that the iterator is exhausted
         assert!(slot_hashes.into_iter().nth(NUM_ENTRIES).is_none());
 
         // Test ExactSizeIterator hint
@@ -676,6 +673,41 @@ mod tests {
 
         let iter = (&sh).into_iter();
         assert_eq!(iter.len(), sh.len());
+    }
+
+    #[test]
+    #[should_panic(expected = "assertion failed")]
+    fn test_invalid_length_debug_assert() {
+        let data = std::vec![0u8; 100];
+        let _sh = unsafe { SlotHashes::new_unchecked(data.as_slice(), MAX_ENTRIES + 1) };
+    }
+
+    #[test]
+    #[should_panic(expected = "assertion failed")]
+    fn test_insufficient_data_debug_assert() {
+        let data = std::vec![0u8; NUM_ENTRIES_SIZE + 10]; // Too small for 2 entries
+        let _sh = unsafe { SlotHashes::new_unchecked(data.as_slice(), 2) };
+    }
+
+    // Tests to verify our mock data helper
+    #[test]
+    fn mock_data_max_entries_boundary() {
+        let entries = generate_mock_entries(MAX_ENTRIES, 1000, DecrementStrategy::Strictly1);
+        let data = create_mock_data(&entries);
+        let sh = unsafe { SlotHashes::new_unchecked(data.as_slice(), MAX_ENTRIES) };
+        assert_eq!(sh.len(), MAX_ENTRIES);
+    }
+
+    #[test]
+    fn mock_data_raw_byte_layout() {
+        let entries = &[(100u64, [0xAB; 32])];
+        let data = create_mock_data(entries);
+        // length prefix
+        assert_eq!(&data[0..8], &1u64.to_le_bytes());
+        // slot bytes
+        assert_eq!(&data[8..16], &100u64.to_le_bytes());
+        // hash bytes
+        assert_eq!(&data[16..48], &[0xAB; 32]);
     }
 }
 
