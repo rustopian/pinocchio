@@ -320,8 +320,6 @@ impl<'a> SlotHashes<Ref<'a, [u8]>> {
     ///
     /// This function verifies that:
     /// - The account key matches the `SLOTHASHES_ID`
-    /// - The data contains a valid length prefix and sufficient data
-    ///   (only if the account key doesn't match SLOTHASHES_ID)
     #[inline(always)]
     pub fn from_account_info(account_info: &'a AccountInfo) -> Result<Self, ProgramError> {
         if account_info.key() != &SLOTHASHES_ID {
