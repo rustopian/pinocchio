@@ -65,6 +65,9 @@ impl<T: Deref<Target = [u8]>> SlotHashes<T> {
     ///
     #[inline(always)]
     pub unsafe fn new_unchecked(data: T, len: usize) -> Self {
+        debug_assert!(
+            len <= MAX_ENTRIES && data.deref().len() >= NUM_ENTRIES_SIZE + len * ENTRY_SIZE
+        );
         SlotHashes { data, len }
     }
 
