@@ -18,6 +18,38 @@ pub const MAX_ENTRIES: usize = 512;
 /// Number of bytes in a hash.
 pub const HASH_BYTES: usize = 32;
 
+/// Reads the entry count from the first 8 bytes of data.
+///
+/// # Safety
+/// Caller must ensure data has at least NUM_ENTRIES_SIZE bytes.
+#[inline(always)]
+fn read_entry_count_from_bytes(data: &[u8]) -> usize {
+    (unsafe { u64::from_le_bytes(*(data.as_ptr() as *const [u8; 8])) }) as usize
+}
+
+/// Validates SlotHashes data format and returns the entry count.
+fn parse_and_validate_data(data: &[u8]) -> Result<usize, ProgramError> {
+    // Need at least the 8-byte length prefix.
+    if data.len() < NUM_ENTRIES_SIZE {
+        return Err(ProgramError::AccountDataTooSmall);
+    }
+
+    let num_entries = read_entry_count_from_bytes(data);
+
+    // Reject oversized accounts so callers are not
+    // surprised by silently truncated results.
+    if num_entries > MAX_ENTRIES {
+        return Err(ProgramError::InvalidArgument);
+    }
+
+    let required_len = NUM_ENTRIES_SIZE + num_entries * ENTRY_SIZE;
+    if data.len() < required_len {
+        return Err(ProgramError::InvalidArgument);
+    }
+
+    Ok(num_entries)
+}
+
 /// Sysvar data is:
 /// len    (8 bytes): little-endian entry count (≤ 512)
 /// entries(len × 40 bytes):    consecutive `(u64 slot, [u8;32] hash)` pairs
@@ -53,15 +85,6 @@ pub struct SlotHashes<T: Deref<Target = [u8]>> {
 }
 
 impl<T: Deref<Target = [u8]>> SlotHashes<T> {
-    /// Reads the entry count from the first 8 bytes of data.
-    ///
-    /// # Safety
-    /// Caller must ensure data has at least NUM_ENTRIES_SIZE bytes.
-    #[inline(always)]
-    fn read_entry_count_from_bytes(data: &[u8]) -> usize {
-        (unsafe { u64::from_le_bytes(*(data.as_ptr() as *const [u8; 8])) }) as usize
-    }
-
     /// Validates that a buffer is properly sized for SlotHashes data.
     ///
     /// Checks that the buffer length is 8 + (N * 40) for some N ≤ 512.
@@ -83,38 +106,13 @@ impl<T: Deref<Target = [u8]>> SlotHashes<T> {
         Ok(())
     }
 
-    /// Validates SlotHashes data format and returns the entry count.
-    ///
-    /// This is a common validation function used by both constructors and accessors.
-    fn parse_and_validate_data(data: &[u8]) -> Result<usize, ProgramError> {
-        // Need at least the 8-byte length prefix.
-        if data.len() < NUM_ENTRIES_SIZE {
-            return Err(ProgramError::AccountDataTooSmall);
-        }
-
-        let num_entries = Self::read_entry_count_from_bytes(data);
-
-        // Reject oversized accounts so callers are not
-        // surprised by silently truncated results.
-        if num_entries > MAX_ENTRIES {
-            return Err(ProgramError::InvalidArgument);
-        }
-
-        let required_len = NUM_ENTRIES_SIZE + num_entries * ENTRY_SIZE;
-        if data.len() < required_len {
-            return Err(ProgramError::InvalidArgument);
-        }
-
-        Ok(num_entries)
-    }
-
     /// Creates a `SlotHashes` instance from arbitrary data with full validation.
     ///
-    /// This constructor performs comprehensive validation of the data format and is safe to use
-    /// with any byte slice. Use this when loading data from untrusted sources.
+    /// This constructor performs comprehensive validation of the data format
+    /// and is safe to use with any byte slice.
     #[inline(always)]
     pub fn new(data: T) -> Result<Self, ProgramError> {
-        let num_entries = Self::parse_and_validate_data(&data)?;
+        let num_entries = parse_and_validate_data(&data)?;
         Ok(unsafe { Self::new_unchecked(data, num_entries) })
     }
 
@@ -142,7 +140,11 @@ impl<T: Deref<Target = [u8]>> SlotHashes<T> {
     /// Performs validation checks and returns the entry count if valid.
     #[inline(always)]
     pub fn get_entry_count(&self) -> Result<usize, ProgramError> {
-        Self::parse_and_validate_data(&self.data)
+        let data_entry_count = read_entry_count_from_bytes(&self.data);
+        if data_entry_count != self.len {
+            return Err(ProgramError::InvalidArgument);
+        }
+        Ok(self.len)
     }
 
     /// Reads the entry count directly from the beginning of this SlotHashes instance **without validation**.
@@ -157,14 +159,10 @@ impl<T: Deref<Target = [u8]>> SlotHashes<T> {
     ///    (out-of-bounds access) or incorrect results.
     #[inline(always)]
     pub unsafe fn get_entry_count_unchecked(&self) -> usize {
-        Self::read_entry_count_from_bytes(&self.data)
+        read_entry_count_from_bytes(&self.data)
     }
 
     /// Fetches the SlotHashes sysvar data directly via syscall into a provided buffer.
-    ///
-    /// This method validates that the buffer is properly sized for SlotHashes data
-    /// (8 bytes + multiple of entry size) and reads the actual entry count from the
-    /// sysvar data.
     ///
     /// # Arguments
     /// * `buffer` - A mutable slice to store the sysvar data. Must be at least 8 bytes
@@ -183,7 +181,7 @@ impl<T: Deref<Target = [u8]>> SlotHashes<T> {
         Self::fetch_into_unchecked(buffer, offset)?;
 
         // Read the actual entry count from the fetched data
-        let num_entries = Self::read_entry_count_from_bytes(buffer);
+        let num_entries = read_entry_count_from_bytes(buffer);
 
         // Validate that our buffer was large enough for the actual data
         let required_len = NUM_ENTRIES_SIZE + num_entries * ENTRY_SIZE;
@@ -198,9 +196,7 @@ impl<T: Deref<Target = [u8]>> SlotHashes<T> {
     /// without validation.
     ///
     /// This method is for programs that cannot include the sysvar account
-    /// but still need access to the slot hashes data. This version works in
-    /// `no_std` environments by using a caller-provided buffer and skips
-    /// buffer size validation.
+    /// but still need access to the slot hashes data.
     ///
     /// # Arguments
     /// * `buffer` - A mutable slice to store the sysvar data. The buffer length
@@ -330,7 +326,7 @@ impl<'a> SlotHashes<Ref<'a, [u8]>> {
 
         // Since the account key matches SLOTHASHES_ID, we can trust the runtime
         // to have provided valid sysvar data. We just need the entry count.
-        let num_entries = Self::read_entry_count_from_bytes(&data_ref);
+        let num_entries = read_entry_count_from_bytes(&data_ref);
 
         Ok(unsafe { Self::new_unchecked(data_ref, num_entries) })
     }
@@ -639,7 +635,6 @@ mod tests {
         );
     }
 
-    // No-std compatible tests
     #[test]
     fn test_basic_getters_and_iterator_no_std() {
         const NUM_ENTRIES: usize = 512;
@@ -648,11 +643,9 @@ mod tests {
         let data = create_mock_data(&entries);
         let slot_hashes = unsafe { SlotHashes::new_unchecked(data.as_slice(), NUM_ENTRIES) };
 
-        // Test len() and is_empty()
         assert_eq!(slot_hashes.len(), NUM_ENTRIES);
         assert!(!slot_hashes.is_empty());
 
-        // Test get_entry()
         let entry0 = slot_hashes.get_entry(0);
         assert!(entry0.is_some());
         assert_eq!(entry0.unwrap().slot(), START_SLOT); // Check against start slot
@@ -660,7 +653,6 @@ mod tests {
 
         let entry2 = slot_hashes.get_entry(NUM_ENTRIES - 1); // Last entry
         assert!(entry2.is_some());
-        // Check last entry against generated data
         assert_eq!(entry2.unwrap().slot(), entries[NUM_ENTRIES - 1].0);
         assert_eq!(entry2.unwrap().hash, entries[NUM_ENTRIES - 1].1);
         assert!(slot_hashes.get_entry(NUM_ENTRIES).is_none()); // Out of bounds
@@ -713,7 +705,6 @@ mod tests {
         }
         let data_slice = &raw_data[..cursor];
 
-        // Test using the new() constructor and instance methods
         let slot_hashes = SlotHashes::new(data_slice).expect("valid data should parse");
         assert_eq!(slot_hashes.len(), 2);
         let count_res = slot_hashes.get_entry_count();
@@ -763,7 +754,6 @@ mod tests {
         raw_data_1[NUM_ENTRIES_SIZE + SLOT_SIZE..].copy_from_slice(single_entry[0].1.as_ref());
         let slot_hashes = unsafe { SlotHashes::new_unchecked(raw_data_1.as_slice(), 1) };
 
-        // Safety: index 0 is valid because len is 1
         let entry = unsafe { slot_hashes.get_entry_unchecked(0) };
         assert_eq!(entry.slot(), 100);
         assert_eq!(entry.hash, [1u8; HASH_BYTES]);
@@ -803,7 +793,7 @@ mod tests {
         let _sh = unsafe { SlotHashes::new_unchecked(data.as_slice(), 2) };
     }
 
-    // Tests to verify our mock data helper
+    // Tests to verify mock data helpers
     #[test]
     fn mock_data_max_entries_boundary() {
         let entries = generate_mock_entries(MAX_ENTRIES, 1000, DecrementStrategy::Strictly1);
@@ -826,50 +816,39 @@ mod tests {
 
     #[test]
     fn test_read_entry_count_from_bytes() {
-        // Test the read_entry_count_from_bytes function directly
-
-        // Create test data with known entry count
         let entry_count = 42u64;
         let mut data = [0u8; 16]; // More than NUM_ENTRIES_SIZE
         data[0..8].copy_from_slice(&entry_count.to_le_bytes());
 
-        let result = SlotHashes::<&[u8]>::read_entry_count_from_bytes(&data);
+        let result = read_entry_count_from_bytes(&data);
         assert_eq!(result, 42);
 
-        // Test with zero entries
         let zero_count = 0u64;
         let mut zero_data = [0u8; 8];
         zero_data.copy_from_slice(&zero_count.to_le_bytes());
 
-        let zero_result = SlotHashes::<&[u8]>::read_entry_count_from_bytes(&zero_data);
+        let zero_result = read_entry_count_from_bytes(&zero_data);
         assert_eq!(zero_result, 0);
 
-        // Test with MAX_ENTRIES
         let max_count = MAX_ENTRIES as u64;
         let mut max_data = [0u8; 8];
         max_data.copy_from_slice(&max_count.to_le_bytes());
 
-        let max_result = SlotHashes::<&[u8]>::read_entry_count_from_bytes(&max_data);
+        let max_result = read_entry_count_from_bytes(&max_data);
         assert_eq!(max_result, MAX_ENTRIES);
     }
 
     #[test]
     fn test_validate_buffer_size() {
-        // Test the validate_buffer_size function directly
-
-        // Too small buffer (less than NUM_ENTRIES_SIZE)
         let small_len = 4;
         assert!(SlotHashes::<&[u8]>::validate_buffer_size(small_len).is_err());
 
-        // Buffer size not aligned to entry size (8 + 39 bytes instead of 8 + 40)
         let misaligned_len = NUM_ENTRIES_SIZE + 39;
         assert!(SlotHashes::<&[u8]>::validate_buffer_size(misaligned_len).is_err());
 
-        // Buffer too large (exceeds MAX_ENTRIES)
         let oversized_len = NUM_ENTRIES_SIZE + (MAX_ENTRIES + 1) * ENTRY_SIZE;
         assert!(SlotHashes::<&[u8]>::validate_buffer_size(oversized_len).is_err());
 
-        // Valid buffer sizes should pass validation
         let valid_empty_len = NUM_ENTRIES_SIZE; // 0 entries
         assert!(SlotHashes::<&[u8]>::validate_buffer_size(valid_empty_len).is_ok());
 
@@ -884,7 +863,6 @@ mod tests {
         assert!(SlotHashes::<&[u8]>::validate_buffer_size(boundary_len).is_ok());
     }
 
-    // Mock helper function to simulate syscall behavior for testing offset functionality
     fn mock_fetch_into_unchecked(
         mock_sysvar_data: &[u8],
         buffer: &mut [u8],
@@ -947,6 +925,30 @@ mod tests {
             mock_fetch_into_unchecked(&mock_sysvar_data, &mut buffer_beyond, beyond_offset)
                 .is_err()
         );
+    }
+
+    #[test]
+    fn test_get_entry_count_consistency_check() {
+        // Create data with space for 3 entries but only populate 2
+        let entries = &[
+            (100u64, [1u8; HASH_BYTES]),
+            (99u64, [2u8; HASH_BYTES]),
+            (98u64, [3u8; HASH_BYTES]),
+        ];
+        let mut data = create_mock_data(entries);
+
+        let slot_hashes = unsafe { SlotHashes::new_unchecked(data.as_slice(), 3) };
+        assert_eq!(slot_hashes.get_entry_count().unwrap(), 3);
+
+        let slot_hashes_wrong = unsafe { SlotHashes::new_unchecked(data.as_slice(), 2) };
+        assert!(slot_hashes_wrong.get_entry_count().is_err());
+
+        data[0..8].copy_from_slice(&2u64.to_le_bytes()); // Change prefix to 2
+        let slot_hashes_wrong2 = unsafe { SlotHashes::new_unchecked(data.as_slice(), 3) };
+        assert!(slot_hashes_wrong2.get_entry_count().is_err());
+
+        let slot_hashes_consistent = unsafe { SlotHashes::new_unchecked(data.as_slice(), 2) };
+        assert_eq!(slot_hashes_consistent.get_entry_count().unwrap(), 2);
     }
 }
 
