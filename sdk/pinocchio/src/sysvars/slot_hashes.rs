@@ -19,11 +19,21 @@ pub const MAX_ENTRIES: usize = 512;
 pub const HASH_BYTES: usize = 32;
 
 /// Reads the entry count from the first 8 bytes of data.
+/// Returns None if the data is too short.
+#[inline(always)]
+fn read_entry_count_from_bytes(data: &[u8]) -> Option<usize> {
+    if data.len() < NUM_ENTRIES_SIZE {
+        return None;
+    }
+    Some(unsafe { u64::from_le_bytes(*(data.as_ptr() as *const [u8; 8])) } as usize)
+}
+
+/// Reads the entry count from the first 8 bytes of data.
 ///
 /// # Safety
 /// Caller must ensure data has at least NUM_ENTRIES_SIZE bytes.
 #[inline(always)]
-fn read_entry_count_from_bytes(data: &[u8]) -> usize {
+unsafe fn read_entry_count_from_bytes_unchecked(data: &[u8]) -> usize {
     (unsafe { u64::from_le_bytes(*(data.as_ptr() as *const [u8; 8])) }) as usize
 }
 
@@ -34,7 +44,7 @@ fn parse_and_validate_data(data: &[u8]) -> Result<usize, ProgramError> {
         return Err(ProgramError::AccountDataTooSmall);
     }
 
-    let num_entries = read_entry_count_from_bytes(data);
+    let num_entries = unsafe { read_entry_count_from_bytes_unchecked(data) };
 
     // Reject oversized accounts so callers are not
     // surprised by silently truncated results.
@@ -69,6 +79,11 @@ pub struct SlotHashEntry {
     /// The hash corresponding to the slot.
     pub hash: [u8; HASH_BYTES],
 }
+
+// Compile-time assertion (prevent silent safety fail if slot_le is reverted to u64)
+const _: () = {
+    assert!(core::mem::align_of::<SlotHashEntry>() == 1);
+};
 
 impl SlotHashEntry {
     /// Returns the slot number as a u64.
@@ -109,8 +124,8 @@ impl<T: Deref<Target = [u8]>> SlotHashes<T> {
     /// Creates a `SlotHashes` instance from arbitrary data with full validation.
     ///
     /// This constructor performs comprehensive validation of the data format
-    /// and is safe to use with any byte slice.
-    #[inline(always)]
+    /// including length prefix, entry count bounds, and buffer size requirements.
+    /// Does not validate that entries are sorted in descending order.
     pub fn new(data: T) -> Result<Self, ProgramError> {
         let num_entries = parse_and_validate_data(&data)?;
         Ok(unsafe { Self::new_unchecked(data, num_entries) })
@@ -130,7 +145,6 @@ impl<T: Deref<Target = [u8]>> SlotHashes<T> {
     /// 3. The data slice contains at least `NUM_ENTRIES_SIZE + len * ENTRY_SIZE` bytes.
     /// 4. Alignment is correct for SlotHashEntry access.
     ///
-    #[inline(always)]
     pub unsafe fn new_unchecked(data: T, len: usize) -> Self {
         debug_assert!(len <= MAX_ENTRIES && data.len() >= NUM_ENTRIES_SIZE + len * ENTRY_SIZE);
         SlotHashes { data, len }
@@ -138,9 +152,8 @@ impl<T: Deref<Target = [u8]>> SlotHashes<T> {
 
     /// Gets the number of entries stored in this SlotHashes instance.
     /// Performs validation checks and returns the entry count if valid.
-    #[inline(always)]
     pub fn get_entry_count(&self) -> Result<usize, ProgramError> {
-        let data_entry_count = read_entry_count_from_bytes(&self.data);
+        let data_entry_count = read_entry_count_from_bytes(&self.data).unwrap_or(0);
         if data_entry_count != self.len {
             return Err(ProgramError::InvalidArgument);
         }
@@ -159,7 +172,7 @@ impl<T: Deref<Target = [u8]>> SlotHashes<T> {
     ///    (out-of-bounds access) or incorrect results.
     #[inline(always)]
     pub unsafe fn get_entry_count_unchecked(&self) -> usize {
-        read_entry_count_from_bytes(&self.data)
+        read_entry_count_from_bytes_unchecked(&self.data)
     }
 
     /// Fetches the SlotHashes sysvar data directly via syscall into a provided buffer.
@@ -181,7 +194,12 @@ impl<T: Deref<Target = [u8]>> SlotHashes<T> {
         Self::fetch_into_unchecked(buffer, offset)?;
 
         // Read the actual entry count from the fetched data
-        let num_entries = read_entry_count_from_bytes(buffer);
+        let num_entries = read_entry_count_from_bytes(buffer).unwrap_or(0);
+
+        // Reject oversized entry counts to prevent surprises
+        if num_entries > MAX_ENTRIES {
+            return Err(ProgramError::InvalidArgument);
+        }
 
         // Validate that our buffer was large enough for the actual data
         let required_len = NUM_ENTRIES_SIZE + num_entries * ENTRY_SIZE;
@@ -261,7 +279,6 @@ impl<T: Deref<Target = [u8]>> SlotHashes<T> {
     ///
     /// Returns the hash if the slot is found, or `None` if not found.
     /// Assumes entries are sorted by slot in descending order.
-    #[inline(always)]
     pub fn get_hash(&self, target_slot: Slot) -> Option<&[u8; HASH_BYTES]> {
         let entries = self.as_entries_slice();
         entries
@@ -274,7 +291,6 @@ impl<T: Deref<Target = [u8]>> SlotHashes<T> {
     ///
     /// Returns the index if the slot is found, or `None` if not found.
     /// Assumes entries are sorted by slot in descending order.
-    #[inline(always)]
     pub fn position(&self, target_slot: Slot) -> Option<usize> {
         let entries = self.as_entries_slice();
         entries
@@ -284,9 +300,9 @@ impl<T: Deref<Target = [u8]>> SlotHashes<T> {
 
     /// Returns a `&[SlotHashEntry]` view into the underlying data.
     ///
-    /// The constructor (either the safe path that called `parse_and_validate_data` or
-    /// the unsafe `new_unchecked`) is responsible for ensuring the slice is big enough
-    /// and properly aligned.
+    /// The constructor (in the safe path that called `parse_and_validate_data`)
+    /// or caller (if unsafe `new_unchecked` path) is responsible for ensuring
+    /// the slice is big enough and properly aligned.
     #[inline(always)]
     fn as_entries_slice(&self) -> &[SlotHashEntry] {
         if self.len == 0 {
@@ -305,7 +321,6 @@ impl<'a, T: Deref<Target = [u8]>> IntoIterator for &'a SlotHashes<T> {
     type Item = &'a SlotHashEntry;
     type IntoIter = core::slice::Iter<'a, SlotHashEntry>;
 
-    #[inline(always)]
     fn into_iter(self) -> Self::IntoIter {
         self.as_entries_slice().iter()
     }
@@ -316,7 +331,6 @@ impl<'a> SlotHashes<Ref<'a, [u8]>> {
     ///
     /// This function verifies that:
     /// - The account key matches the `SLOTHASHES_ID`
-    #[inline(always)]
     pub fn from_account_info(account_info: &'a AccountInfo) -> Result<Self, ProgramError> {
         if account_info.key() != &SLOTHASHES_ID {
             return Err(ProgramError::InvalidArgument);
@@ -326,7 +340,7 @@ impl<'a> SlotHashes<Ref<'a, [u8]>> {
 
         // Since the account key matches SLOTHASHES_ID, we can trust the runtime
         // to have provided valid sysvar data. We just need the entry count.
-        let num_entries = read_entry_count_from_bytes(&data_ref);
+        let num_entries = unsafe { read_entry_count_from_bytes_unchecked(&data_ref) };
 
         Ok(unsafe { Self::new_unchecked(data_ref, num_entries) })
     }
@@ -723,9 +737,7 @@ mod tests {
         let res2 = SlotHashes::new(short_data_2);
         assert!(matches!(res2, Err(ProgramError::InvalidArgument)));
 
-        // For the unsafe access, create a SlotHashes with the short data using new_unchecked
-        let short_hashes = unsafe { SlotHashes::new_unchecked(short_data_2, 1) };
-        let count_res_unchecked_2 = unsafe { short_hashes.get_entry_count_unchecked() };
+        let count_res_unchecked_2 = unsafe { read_entry_count_from_bytes_unchecked(&short_data_2) };
         assert_eq!(count_res_unchecked_2, 2);
 
         // Empty data is valid
@@ -738,7 +750,7 @@ mod tests {
         let empty_res = empty_hashes.get_entry_count();
         assert!(empty_res.is_ok());
         assert_eq!(empty_res.unwrap(), 0);
-        let unsafe_empty_len = unsafe { empty_hashes.get_entry_count_unchecked() };
+        let unsafe_empty_len = unsafe { read_entry_count_from_bytes_unchecked(&empty_raw_data) };
         assert_eq!(unsafe_empty_len, 0);
     }
 
@@ -821,21 +833,21 @@ mod tests {
         data[0..8].copy_from_slice(&entry_count.to_le_bytes());
 
         let result = read_entry_count_from_bytes(&data);
-        assert_eq!(result, 42);
+        assert_eq!(result, Some(42));
 
         let zero_count = 0u64;
         let mut zero_data = [0u8; 8];
         zero_data.copy_from_slice(&zero_count.to_le_bytes());
 
         let zero_result = read_entry_count_from_bytes(&zero_data);
-        assert_eq!(zero_result, 0);
+        assert_eq!(zero_result, Some(0));
 
         let max_count = MAX_ENTRIES as u64;
         let mut max_data = [0u8; 8];
         max_data.copy_from_slice(&max_count.to_le_bytes());
 
         let max_result = read_entry_count_from_bytes(&max_data);
-        assert_eq!(max_result, MAX_ENTRIES);
+        assert_eq!(max_result, Some(MAX_ENTRIES));
     }
 
     #[test]
