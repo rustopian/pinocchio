@@ -39,7 +39,7 @@ pub struct SlotHashEntry {
     pub hash: [u8; HASH_BYTES],
 }
 
-const _ALIGN_ASSERT: [();1] = [(); (align_of::<SlotHashEntry>() == 1) as usize];
+const _ALIGN_ASSERT: [(); 1] = [(); (align_of::<SlotHashEntry>() == 1) as usize];
 
 /// SlotHashes provides read-only, zero-copy access to SlotHashes sysvar bytes.
 pub struct SlotHashes<T: Deref<Target = [u8]>> {
