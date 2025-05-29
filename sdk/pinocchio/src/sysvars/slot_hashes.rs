@@ -20,6 +20,33 @@ pub const HASH_BYTES: usize = 32;
 /// Max size of the sysvar data in bytes. Golden on mainnet (never smaller)
 pub const MAX_SIZE: usize = 20_488;
 
+
+/// Sysvar data is:
+/// len    (8 bytes): little-endian entry count (≤ 512)
+/// entries(len × 40 bytes):    consecutive `(u64 slot, [u8;32] hash)` pairs
+/// Size of the entry count field at the beginning of sysvar data.
+pub const NUM_ENTRIES_SIZE: usize = mem::size_of::<u64>();
+/// Size of a slot number in bytes.
+pub const SLOT_SIZE: usize = mem::size_of::<Slot>();
+/// Size of a single slot hash entry (slot + hash).
+pub const ENTRY_SIZE: usize = SLOT_SIZE + HASH_BYTES;
+
+/// A single entry in the `SlotHashes` sysvar.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[repr(C)]
+pub struct SlotHashEntry {
+    /// The slot number stored as little-endian bytes.
+    slot_le: [u8; 8],
+    /// The hash corresponding to the slot.
+    pub hash: [u8; HASH_BYTES],
+}
+
+// Compile-time assertion (prevent silent safety fail if slot_le is reverted to u64)
+const _: () = {
+    assert!(core::mem::align_of::<SlotHashEntry>() == 1);
+};
+
+
 /// Reads the entry count from the first 8 bytes of data.
 /// Returns None if the data is too short.
 #[inline(always)]
@@ -92,31 +119,6 @@ fn parse_and_validate_data(data: &[u8]) -> Result<usize, ProgramError> {
 
     validate_slothashes_constraints(data.len(), Some(num_entries))
 }
-
-/// Sysvar data is:
-/// len    (8 bytes): little-endian entry count (≤ 512)
-/// entries(len × 40 bytes):    consecutive `(u64 slot, [u8;32] hash)` pairs
-/// Size of the entry count field at the beginning of sysvar data.
-pub const NUM_ENTRIES_SIZE: usize = mem::size_of::<u64>();
-/// Size of a slot number in bytes.
-pub const SLOT_SIZE: usize = mem::size_of::<Slot>();
-/// Size of a single slot hash entry (slot + hash).
-pub const ENTRY_SIZE: usize = SLOT_SIZE + HASH_BYTES;
-
-/// A single entry in the `SlotHashes` sysvar.
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
-#[repr(C)]
-pub struct SlotHashEntry {
-    /// The slot number stored as little-endian bytes.
-    slot_le: [u8; 8],
-    /// The hash corresponding to the slot.
-    pub hash: [u8; HASH_BYTES],
-}
-
-// Compile-time assertion (prevent silent safety fail if slot_le is reverted to u64)
-const _: () = {
-    assert!(core::mem::align_of::<SlotHashEntry>() == 1);
-};
 
 impl SlotHashEntry {
     /// Returns the slot number as a u64.
