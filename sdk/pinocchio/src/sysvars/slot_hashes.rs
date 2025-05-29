@@ -6,7 +6,7 @@ use crate::{
     pubkey::Pubkey,
     sysvars::clock::Slot,
 };
-use core::{mem, ops::Deref};
+use core::{fmt, mem, ops::Deref};
 
 /// SysvarS1otHashes111111111111111111111111111
 pub const SLOTHASHES_ID: Pubkey = [
@@ -39,7 +39,7 @@ pub struct SlotHashEntry {
     pub hash: [u8; HASH_BYTES],
 }
 
-const _ALIGN_ASSERT: [(); 1] = [(); (align_of::<SlotHashEntry>() == 1) as usize];
+const _ALIGN_ASSERT: [(); 1] = [(); (mem::align_of::<SlotHashEntry>() == 1) as usize];
 
 /// SlotHashes provides read-only, zero-copy access to SlotHashes sysvar bytes.
 pub struct SlotHashes<T: Deref<Target = [u8]>> {
@@ -157,7 +157,7 @@ impl<T: Deref<Target = [u8]>> SlotHashes<T> {
     /// This function is unsafe because it does not check the validity of the data or count.
     /// The caller must ensure:
     /// 1. The underlying byte slice in `data` represents valid SlotHashes data
-    ///    (length prefix + entries).
+    ///    (length prefix + entries, where entries are sorted in descending order by slot).
     /// 2. `len` is the correct number of entries (≤ MAX_ENTRIES), matching the prefix.
     /// 3. The data slice contains at least `NUM_ENTRIES_SIZE + len * ENTRY_SIZE` bytes.
     /// 4. Alignment is correct for SlotHashEntry access.
@@ -190,7 +190,7 @@ impl<T: Deref<Target = [u8]>> SlotHashes<T> {
     ///    (out-of-bounds access) or incorrect results.
     #[inline(always)]
     pub unsafe fn get_entry_count_unchecked(&self) -> usize {
-        unsafe { read_entry_count_from_bytes_unchecked(&self.data) }
+        read_entry_count_from_bytes_unchecked(&self.data)
     }
 
     /// Validates offset parameters for fetching SlotHashes data.

@@ -795,11 +795,9 @@ mod edge_tests {
 #[cfg(feature = "std")]
 impl SlotHashes<std::vec::Vec<u8>> {
     /// Fetches the SlotHashes sysvar data directly via syscall. This copies
-    /// the full sysvar data (20_488 bytes).
-    ///
-    /// For most use cases, prefer `from_account_info()` which provides zero-copy access.
+    /// the full sysvar data (`MAX_SIZE` bytes).
     pub fn fetch() -> Result<Self, ProgramError> {
-        let mut data = std::vec![0u8; 20_488]; // NUM_ENTRIES_SIZE + MAX_ENTRIES * ENTRY_SIZE
+        let mut data = std::vec![0u8; MAX_SIZE];
 
         // Use fetch_into to get the data and entry count
         let num_entries = Self::fetch_into(&mut data, 0)?;
