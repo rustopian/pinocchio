@@ -130,7 +130,6 @@ mod tests {
 
         #[test]
         fn test_from_account_info_constructor() {
-            // Cover the safe constructor that goes through `AccountInfo` and holds the Ref.
             use crate::account_info::{Account, AccountInfo};
             use crate::pubkey::Pubkey;
             use core::{mem, ptr};
@@ -159,7 +158,7 @@ mod tests {
             }
 
             unsafe {
-                // 1) Build a contiguous Vec<u8> with header followed by SlotHashes payload.
+                // Build a contiguous Vec<u8> with header followed by SlotHashes payload.
                 let header_size = mem::size_of::<FakeAccount>();
                 let mut blob: Vec<u8> = std::vec![0u8; header_size + data.len()];
 
@@ -210,6 +209,64 @@ mod tests {
                 assert_eq!(entry.hash, mock_entries[i].1);
             }
         }
+
+        // Mock implementation of the runtime syscall used by `SlotHashes::fetch()`.
+        // Overrides extern "C" declaration in `syscalls.rs` when
+        // the unit tests are linked on the host, allowing the
+        // fetch-path without Solana runtime.
+        #[no_mangle]
+        pub extern "C" fn sol_get_sysvar(
+            _sysvar_id_addr: *const u8,
+            result: *mut u8,
+            offset: u64,
+            length: u64,
+        ) -> u64 {
+            unsafe {
+                if MOCK_SYSVAR_PTR.is_null() {
+                    return 1; // failure
+                }
+
+                let available = MOCK_SYSVAR_LEN as u64;
+                if offset >= available {
+                    return 1;
+                }
+
+                let copy_len = core::cmp::min(length, available - offset) as usize;
+                core::ptr::copy_nonoverlapping(
+                    MOCK_SYSVAR_PTR.add(offset as usize),
+                    result,
+                    copy_len,
+                );
+            }
+            0
+        }
+
+        static mut MOCK_SYSVAR_PTR: *const u8 = core::ptr::null();
+        static mut MOCK_SYSVAR_LEN: usize = 0;
+
+        unsafe fn set_mock_sysvar(slice: &[u8]) {
+            MOCK_SYSVAR_PTR = slice.as_ptr();
+            MOCK_SYSVAR_LEN = slice.len();
+        }
+
+        #[test]
+        fn test_fetch_std_path() {
+            // Prepare mock SlotHashes data (5 entries).
+            const START_SLOT: u64 = 500;
+            let entries = generate_mock_entries(5, START_SLOT, DecrementStrategy::Strictly1);
+            let data = create_mock_data(&entries);
+
+            unsafe { set_mock_sysvar(&data) };
+
+            let fetched = SlotHashes::<std::vec::Vec<u8>>::fetch()
+                .expect("fetch() should succeed with mock syscall");
+
+            assert_eq!(fetched.len(), entries.len());
+            for (i, entry) in fetched.into_iter().enumerate() {
+                assert_eq!(entry.slot(), entries[i].0);
+                assert_eq!(entry.hash, entries[i].1);
+            }
+        }
     }
 
     #[derive(Clone, Copy, Debug)]
@@ -233,19 +290,16 @@ mod tests {
         const TEST_NUM_ENTRIES: usize = 512;
         const START_SLOT: u64 = 2000;
 
-        // Generate entries using Avg1.05 strategy
         let entries =
             generate_mock_entries(TEST_NUM_ENTRIES, START_SLOT, DecrementStrategy::Average1_05);
         let data = create_mock_data(&entries);
         let entry_count = entries.len();
 
-        // Get first, middle, and last generated slots for testing
         let first_slot = entries[0].0;
         let mid_index = entry_count / 2;
         let mid_slot = entries[mid_index].0;
         let last_slot = entries[entry_count - 1].0;
 
-        // Create SlotHashes using the unsafe constructor with a slice
         let slot_hashes = unsafe { SlotHashes::new_unchecked(data.as_slice(), entry_count) };
 
         assert_eq!(slot_hashes.position(first_slot), Some(0));
@@ -265,8 +319,7 @@ mod tests {
 
         assert_eq!(slot_hashes.position(last_slot), Some(entry_count - 1));
 
-        // Test non-existent slots
-        assert_eq!(slot_hashes.position(START_SLOT + 1), None); // Slot above start
+        assert_eq!(slot_hashes.position(START_SLOT + 1), None);
 
         // Find an actual gap to test a guaranteed non-existent internal slot
         let mut missing_internal_slot = None;
@@ -387,7 +440,7 @@ mod tests {
         assert!(matches!(res1, Err(ProgramError::AccountDataTooSmall)));
 
         // Data too small (correct len prefix, but not enough data for entries)
-        let short_data_2 = &data_slice[0..NUM_ENTRIES_SIZE + ENTRY_SIZE]; // Only space for 1 entry
+        let short_data_2 = &data_slice[0..NUM_ENTRIES_SIZE + ENTRY_SIZE];
         let res2 = SlotHashes::new(short_data_2);
         assert!(matches!(res2, Err(ProgramError::InvalidArgument)));
 
@@ -483,7 +536,7 @@ mod tests {
     #[test]
     fn test_read_entry_count_from_bytes() {
         let entry_count = 42u64;
-        let mut data = [0u8; 16]; // More than NUM_ENTRIES_SIZE
+        let mut data = [0u8; 16];
         data[0..8].copy_from_slice(&entry_count.to_le_bytes());
 
         let result = read_entry_count_from_bytes(&data);
@@ -515,13 +568,13 @@ mod tests {
         let oversized_len = NUM_ENTRIES_SIZE + (MAX_ENTRIES + 1) * ENTRY_SIZE;
         assert!(SlotHashes::<&[u8]>::validate_buffer_size(oversized_len).is_err());
 
-        let valid_empty_len = NUM_ENTRIES_SIZE; // 0 entries
+        let valid_empty_len = NUM_ENTRIES_SIZE;
         assert!(SlotHashes::<&[u8]>::validate_buffer_size(valid_empty_len).is_ok());
 
-        let valid_one_len = NUM_ENTRIES_SIZE + ENTRY_SIZE; // 1 entry
+        let valid_one_len = NUM_ENTRIES_SIZE + ENTRY_SIZE;
         assert!(SlotHashes::<&[u8]>::validate_buffer_size(valid_one_len).is_ok());
 
-        let valid_max_len = NUM_ENTRIES_SIZE + MAX_ENTRIES * ENTRY_SIZE; // MAX_ENTRIES
+        let valid_max_len = NUM_ENTRIES_SIZE + MAX_ENTRIES * ENTRY_SIZE;
         assert!(SlotHashes::<&[u8]>::validate_buffer_size(valid_max_len).is_ok());
 
         // Edge case: exactly at the boundary
@@ -633,10 +686,7 @@ mod tests {
 
     #[test]
     fn test_fetch_into_offset_validation() {
-        // Test that offset validation works correctly
         let buffer_len = 200;
-
-        // Test valid offsets
 
         // Offset 0 (start of data) - should pass validation
         assert!(SlotHashes::<&[u8]>::validate_fetch_offset(0, buffer_len).is_ok());
@@ -650,7 +700,7 @@ mod tests {
         // Offset 88 (start of third entry) - should pass validation
         assert!(SlotHashes::<&[u8]>::validate_fetch_offset(88, buffer_len).is_ok());
 
-        // Test invalid offsets that should fail validation
+        // Invalid offsets that should fail validation
 
         // Offset beyond MAX_SIZE
         assert!(SlotHashes::<&[u8]>::validate_fetch_offset(MAX_SIZE as u64, buffer_len).is_err());
@@ -668,12 +718,12 @@ mod tests {
         assert!(SlotHashes::<&[u8]>::validate_fetch_offset(1, MAX_SIZE).is_err());
         assert!(SlotHashes::<&[u8]>::validate_fetch_offset(MAX_SIZE as u64 - 100, 200).is_err());
 
-        // Edge cases that should be valid
+        // Last entry
         assert!(
             SlotHashes::<&[u8]>::validate_fetch_offset(8 + 511 * ENTRY_SIZE as u64, 40).is_ok()
-        ); // Last entry
+        );
 
-        // Edge case that should be invalid (one past last valid entry)
+        // One past last valid entry
         assert!(
             SlotHashes::<&[u8]>::validate_fetch_offset(8 + 512 * ENTRY_SIZE as u64, 40).is_err()
         );
@@ -730,7 +780,6 @@ mod edge_tests {
             },
         );
         ptr::copy_nonoverlapping(data.as_ptr(), backing.as_mut_ptr().add(hdr_len), data.len());
-        // Leak backing so the slice outlives the AccountInfo for the duration of the test.
         core::mem::forget(backing);
         AccountInfo {
             raw: hdr_ptr as *mut Account,
@@ -789,19 +838,5 @@ mod edge_tests {
         let sh = unsafe { SlotHashes::new_unchecked(&zero_bytes[..], 0) };
         assert_eq!(sh.len(), 0);
         assert!(sh.into_iter().next().is_none());
-    }
-}
-
-#[cfg(feature = "std")]
-impl SlotHashes<std::vec::Vec<u8>> {
-    /// Fetches the SlotHashes sysvar data directly via syscall. This copies
-    /// the full sysvar data (`MAX_SIZE` bytes).
-    pub fn fetch() -> Result<Self, ProgramError> {
-        let mut data = std::vec![0u8; MAX_SIZE];
-
-        // Use fetch_into to get the data and entry count
-        let num_entries = Self::fetch_into(&mut data, 0)?;
-
-        Ok(unsafe { Self::new_unchecked(data, num_entries) })
     }
 }

@@ -6,7 +6,7 @@ use crate::{
     pubkey::Pubkey,
     sysvars::clock::Slot,
 };
-use core::{fmt, mem, ops::Deref};
+use core::{mem, ops::Deref};
 
 /// SysvarS1otHashes111111111111111111111111111
 pub const SLOTHASHES_ID: Pubkey = [
@@ -401,6 +401,20 @@ impl<'a> SlotHashes<Ref<'a, [u8]>> {
         let num_entries = unsafe { read_entry_count_from_bytes_unchecked(&data_ref) };
 
         Ok(unsafe { Self::new_unchecked(data_ref, num_entries) })
+    }
+}
+
+#[cfg(feature = "std")]
+impl SlotHashes<std::vec::Vec<u8>> {
+    /// Fetches the SlotHashes sysvar data directly via syscall. This copies
+    /// the full sysvar data (`MAX_SIZE` bytes).
+    pub fn fetch() -> Result<Self, ProgramError> {
+        let mut data = std::vec![0u8; MAX_SIZE];
+
+        // Use fetch_into to get the data and entry count
+        let num_entries = Self::fetch_into(&mut data, 0)?;
+
+        Ok(unsafe { Self::new_unchecked(data, num_entries) })
     }
 }
 
