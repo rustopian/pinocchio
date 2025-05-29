@@ -39,10 +39,7 @@ pub struct SlotHashEntry {
     pub hash: [u8; HASH_BYTES],
 }
 
-// Compile-time assertion (prevent silent safety fail if slot_le is reverted to u64)
-const _: () = {
-    assert!(core::mem::align_of::<SlotHashEntry>() == 1);
-};
+const _ALIGN_ASSERT: [();1] = [(); (align_of::<SlotHashEntry>() == 1) as usize];
 
 /// SlotHashes provides read-only, zero-copy access to SlotHashes sysvar bytes.
 pub struct SlotHashes<T: Deref<Target = [u8]>> {
