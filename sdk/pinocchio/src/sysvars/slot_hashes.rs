@@ -281,22 +281,17 @@ impl<T: Deref<Target = [u8]>> SlotHashes<T> {
         self.len == 0
     }
 
-    /// Gets a reference to the `SlotHashEntry` at the specified index.
-    /// Returns `None` if the index is out of bounds.
+    /// Returns the entire slice of entries. Call once and reuse the slice if you
+    /// need many look-ups.
+    #[inline(always)]
+    pub fn entries(&self) -> &[SlotHashEntry] {
+        self.as_entries_slice()
+    }
+
+    /// Gets a reference to the entry at `index` or `None` if out of bounds.
     #[inline(always)]
     pub fn get_entry(&self, index: usize) -> Option<&SlotHashEntry> {
         self.as_entries_slice().get(index)
-    }
-
-    /// Gets a reference without bounds checking.
-    ///
-    /// # Safety
-    /// Caller must ensure `index < self.len()`.
-    #[inline(always)]
-    pub unsafe fn get_entry_unchecked(&self, index: usize) -> &SlotHashEntry {
-        debug_assert!(index < self.len);
-        let offset = NUM_ENTRIES_SIZE + index * ENTRY_SIZE;
-        &*(self.data.as_ptr().add(offset) as *const SlotHashEntry)
     }
 
     /// Finds the hash for a specific slot using binary search.
@@ -327,12 +322,6 @@ impl<T: Deref<Target = [u8]>> SlotHashes<T> {
     }
 
     /// Returns a `&[SlotHashEntry]` view into the underlying data.
-    #[inline(always)]
-    pub fn entries(&self) -> &[SlotHashEntry] {
-        self.as_entries_slice()
-    }
-
-    /// Returns a `&[SlotHashEntry]` view into the underlying data.
     ///
     /// The constructor (in the safe path that called `parse_and_validate_data`)
     /// or caller (if unsafe `new_unchecked` path) is responsible for ensuring
@@ -348,6 +337,15 @@ impl<T: Deref<Target = [u8]>> SlotHashes<T> {
         let entries_ptr =
             unsafe { self.data.as_ptr().add(NUM_ENTRIES_SIZE) as *const SlotHashEntry };
         unsafe { core::slice::from_raw_parts(entries_ptr, self.len) }
+    }
+
+    /// # Safety
+    /// Caller must ensure `index < self.len()`.
+    #[inline(always)]
+    pub unsafe fn get_entry_unchecked(&self, index: usize) -> &SlotHashEntry {
+        debug_assert!(index < self.len);
+        let offset = NUM_ENTRIES_SIZE + index * ENTRY_SIZE;
+        &*(self.data.as_ptr().add(offset) as *const SlotHashEntry)
     }
 }
 
@@ -995,6 +993,20 @@ mod tests {
 
         let slot_hashes_consistent = unsafe { SlotHashes::new_unchecked(data.as_slice(), 2) };
         assert_eq!(slot_hashes_consistent.get_entry_count().unwrap(), 2);
+    }
+
+    #[test]
+    fn test_entries_exposed_no_std() {
+        let entries = generate_mock_entries(8, 80, DecrementStrategy::Strictly1);
+        let data = create_mock_data(&entries);
+        let sh = unsafe { SlotHashes::new_unchecked(data.as_slice(), entries.len()) };
+
+        let slice = sh.entries();
+        assert_eq!(slice.len(), entries.len());
+        for (i, e) in slice.iter().enumerate() {
+            assert_eq!(e.slot(), entries[i].0);
+            assert_eq!(e.hash, entries[i].1);
+        }
     }
 }
 
