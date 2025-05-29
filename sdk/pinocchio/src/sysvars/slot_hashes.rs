@@ -63,7 +63,7 @@ fn read_entry_count_from_bytes(data: &[u8]) -> Option<usize> {
 /// Caller must ensure data has at least NUM_ENTRIES_SIZE bytes.
 #[inline(always)]
 unsafe fn read_entry_count_from_bytes_unchecked(data: &[u8]) -> usize {
-    (unsafe { u64::from_le_bytes(*(data.as_ptr() as *const [u8; 8])) }) as usize
+    u64::from_le_bytes(*(data.as_ptr() as *const [u8; 8])) as usize
 }
 
 /// Validates core SlotHashes constraints: entry count and buffer size requirements.
@@ -232,7 +232,6 @@ impl<T: Deref<Target = [u8]>> SlotHashes<T> {
     ///
     /// For most use cases, prefer `from_account_info()` which provides zero-copy access.
     pub fn fetch_into(buffer: &mut [u8], offset: u64) -> Result<usize, ProgramError> {
-        // Validate buffer size is correct for SlotHashes data
         if buffer.len() != MAX_SIZE {
             Self::validate_buffer_size(buffer.len())?;
         }
@@ -241,7 +240,6 @@ impl<T: Deref<Target = [u8]>> SlotHashes<T> {
 
         Self::fetch_into_unchecked(buffer, offset)?;
 
-        // Read the actual entry count from the fetched data
         let num_entries = read_entry_count_from_bytes(buffer).unwrap_or(0);
 
         // Reject oversized entry counts to prevent surprises
@@ -249,7 +247,6 @@ impl<T: Deref<Target = [u8]>> SlotHashes<T> {
             return Err(ProgramError::InvalidArgument);
         }
 
-        // Validate that our buffer was large enough for the actual data
         let required_len = NUM_ENTRIES_SIZE + num_entries * ENTRY_SIZE;
         if buffer.len() < required_len {
             return Err(ProgramError::InvalidArgument);
@@ -397,7 +394,7 @@ impl<'a> SlotHashes<Ref<'a, [u8]>> {
         let data_ref = account_info.try_borrow_data()?;
 
         // Since the account key matches SLOTHASHES_ID, we can trust the runtime
-        // to have provided valid sysvar data. We just need the entry count.
+        // to have provided valid sysvar data
         let num_entries = unsafe { read_entry_count_from_bytes_unchecked(&data_ref) };
 
         Ok(unsafe { Self::new_unchecked(data_ref, num_entries) })
