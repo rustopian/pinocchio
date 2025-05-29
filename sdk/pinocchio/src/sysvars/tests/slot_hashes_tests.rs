@@ -479,6 +479,19 @@ mod tests {
     }
 
     #[test]
+    fn test_get_entry_unchecked_last_no_std() {
+        const COUNT: usize = 8;
+        const START_SLOT: u64 = 600;
+        let entries = generate_mock_entries(COUNT, START_SLOT, DecrementStrategy::Strictly1);
+        let data = create_mock_data(&entries);
+        let sh = unsafe { SlotHashes::new_unchecked(data.as_slice(), COUNT) };
+
+        let last = unsafe { sh.get_entry_unchecked(COUNT - 1) };
+        assert_eq!(last.slot(), entries[COUNT - 1].0);
+        assert_eq!(last.hash, entries[COUNT - 1].1);
+    }
+
+    #[test]
     fn test_iterator_into_ref_no_std() {
         const NUM: usize = 16;
         const START: u64 = 100;
