@@ -17,9 +17,8 @@ pub const SLOTHASHES_ID: Pubkey = [
 pub const MAX_ENTRIES: usize = 512;
 /// Number of bytes in a hash.
 pub const HASH_BYTES: usize = 32;
-/// Max size of the sysvar data in bytes. Golden on mainnet (never smaller)
-pub const MAX_SIZE: usize = 20_488;
-
+/// Max size of the sysvar data in bytes. 20488. Golden on mainnet (never smaller)
+pub const MAX_SIZE: usize = NUM_ENTRIES_SIZE + MAX_ENTRIES * ENTRY_SIZE;
 
 /// Sysvar data is:
 /// len    (8 bytes): little-endian entry count (≤ 512)
@@ -45,7 +44,6 @@ pub struct SlotHashEntry {
 const _: () = {
     assert!(core::mem::align_of::<SlotHashEntry>() == 1);
 };
-
 
 /// Reads the entry count from the first 8 bytes of data.
 /// Returns None if the data is too short.
@@ -424,6 +422,7 @@ mod tests {
         assert_eq!(SLOT_SIZE, size_of::<u64>());
         assert_eq!(HASH_BYTES, 32);
         assert_eq!(ENTRY_SIZE, size_of::<u64>() + 32);
+        assert_eq!(MAX_SIZE, 20_488);
         assert_eq!(size_of::<SlotHashEntry>(), ENTRY_SIZE);
         assert_eq!(align_of::<SlotHashEntry>(), align_of::<[u8; 8]>());
         assert_eq!(
