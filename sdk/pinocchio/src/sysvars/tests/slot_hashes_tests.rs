@@ -444,7 +444,7 @@ mod tests {
         let res2 = SlotHashes::new(short_data_2);
         assert!(matches!(res2, Err(ProgramError::InvalidArgument)));
 
-        let count_res_unchecked_2 = unsafe { read_entry_count_from_bytes_unchecked(&short_data_2) };
+        let count_res_unchecked_2 = unsafe { read_entry_count_from_bytes_unchecked(short_data_2) };
         assert_eq!(count_res_unchecked_2, 2);
 
         // Empty data is valid
