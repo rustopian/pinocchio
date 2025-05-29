@@ -37,6 +37,48 @@ unsafe fn read_entry_count_from_bytes_unchecked(data: &[u8]) -> usize {
     (unsafe { u64::from_le_bytes(*(data.as_ptr() as *const [u8; 8])) }) as usize
 }
 
+/// Validates core SlotHashes constraints: entry count and buffer size requirements.
+///
+/// # Arguments
+/// * `buffer_len` - Total buffer length including 8-byte header
+/// * `declared_entries` - Optional declared entry count from header (None to skip this check)
+///
+/// # Returns
+/// The maximum entries that fit in the buffer, or error if constraints violated
+fn validate_slothashes_constraints(
+    buffer_len: usize,
+    declared_entries: Option<usize>,
+) -> Result<usize, ProgramError> {
+    // Must have space for 8-byte header
+    if buffer_len < NUM_ENTRIES_SIZE {
+        return Err(ProgramError::AccountDataTooSmall);
+    }
+
+    // Calculate how many entries can fit
+    let data_len = buffer_len - NUM_ENTRIES_SIZE;
+    if data_len % ENTRY_SIZE != 0 {
+        return Err(ProgramError::InvalidArgument);
+    }
+
+    let max_entries = data_len / ENTRY_SIZE;
+    if max_entries > MAX_ENTRIES {
+        return Err(ProgramError::InvalidArgument);
+    }
+
+    // If declared entry count provided, validate it
+    if let Some(declared) = declared_entries {
+        if declared > MAX_ENTRIES {
+            return Err(ProgramError::InvalidArgument);
+        }
+        if declared > max_entries {
+            return Err(ProgramError::InvalidArgument);
+        }
+        return Ok(declared);
+    }
+
+    Ok(max_entries)
+}
+
 /// Validates SlotHashes data format and returns the entry count.
 fn parse_and_validate_data(data: &[u8]) -> Result<usize, ProgramError> {
     // Need at least the 8-byte length prefix.
@@ -46,18 +88,7 @@ fn parse_and_validate_data(data: &[u8]) -> Result<usize, ProgramError> {
 
     let num_entries = unsafe { read_entry_count_from_bytes_unchecked(data) };
 
-    // Reject oversized accounts so callers are not
-    // surprised by silently truncated results.
-    if num_entries > MAX_ENTRIES {
-        return Err(ProgramError::InvalidArgument);
-    }
-
-    let required_len = NUM_ENTRIES_SIZE + num_entries * ENTRY_SIZE;
-    if data.len() < required_len {
-        return Err(ProgramError::InvalidArgument);
-    }
-
-    Ok(num_entries)
+    validate_slothashes_constraints(data.len(), Some(num_entries))
 }
 
 /// Sysvar data is:
@@ -103,21 +134,9 @@ impl<T: Deref<Target = [u8]>> SlotHashes<T> {
     /// Validates that a buffer is properly sized for SlotHashes data.
     ///
     /// Checks that the buffer length is 8 + (N * 40) for some N ≤ 512.
+    #[inline]
     fn validate_buffer_size(buffer_len: usize) -> Result<(), ProgramError> {
-        if buffer_len < NUM_ENTRIES_SIZE {
-            return Err(ProgramError::InvalidArgument);
-        }
-
-        let data_len = buffer_len - NUM_ENTRIES_SIZE;
-        if data_len % ENTRY_SIZE != 0 {
-            return Err(ProgramError::InvalidArgument);
-        }
-
-        let max_entries = data_len / ENTRY_SIZE;
-        if max_entries > MAX_ENTRIES {
-            return Err(ProgramError::InvalidArgument);
-        }
-
+        validate_slothashes_constraints(buffer_len, None)?;
         Ok(())
     }
 
@@ -145,6 +164,7 @@ impl<T: Deref<Target = [u8]>> SlotHashes<T> {
     /// 3. The data slice contains at least `NUM_ENTRIES_SIZE + len * ENTRY_SIZE` bytes.
     /// 4. Alignment is correct for SlotHashEntry access.
     ///
+    #[inline]
     pub unsafe fn new_unchecked(data: T, len: usize) -> Self {
         debug_assert!(len <= MAX_ENTRIES && data.len() >= NUM_ENTRIES_SIZE + len * ENTRY_SIZE);
         SlotHashes { data, len }
@@ -172,7 +192,7 @@ impl<T: Deref<Target = [u8]>> SlotHashes<T> {
     ///    (out-of-bounds access) or incorrect results.
     #[inline(always)]
     pub unsafe fn get_entry_count_unchecked(&self) -> usize {
-        read_entry_count_from_bytes_unchecked(&self.data)
+        unsafe { read_entry_count_from_bytes_unchecked(&self.data) }
     }
 
     /// Fetches the SlotHashes sysvar data directly via syscall into a provided buffer.
