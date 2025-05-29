@@ -17,6 +17,8 @@ pub const SLOTHASHES_ID: Pubkey = [
 pub const MAX_ENTRIES: usize = 512;
 /// Number of bytes in a hash.
 pub const HASH_BYTES: usize = 32;
+/// Max size of the sysvar data in bytes. Golden on mainnet (never smaller)
+pub const MAX_SIZE: usize = 20_488;
 
 /// Reads the entry count from the first 8 bytes of data.
 /// Returns None if the data is too short.
@@ -209,7 +211,9 @@ impl<T: Deref<Target = [u8]>> SlotHashes<T> {
     /// For most use cases, prefer `from_account_info()` which provides zero-copy access.
     pub fn fetch_into(buffer: &mut [u8], offset: u64) -> Result<usize, ProgramError> {
         // Validate buffer size is correct for SlotHashes data
-        Self::validate_buffer_size(buffer.len())?;
+        if buffer.len() != MAX_SIZE {
+            Self::validate_buffer_size(buffer.len())?;
+        }
 
         Self::fetch_into_unchecked(buffer, offset)?;
 
@@ -299,6 +303,8 @@ impl<T: Deref<Target = [u8]>> SlotHashes<T> {
     ///
     /// Returns the hash if the slot is found, or `None` if not found.
     /// Assumes entries are sorted by slot in descending order.
+    /// If calling repeatedly, prefer getting `entries()` in caller
+    /// to avoid repeated slice construction.
     pub fn get_hash(&self, target_slot: Slot) -> Option<&[u8; HASH_BYTES]> {
         let entries = self.as_entries_slice();
         entries
@@ -311,11 +317,19 @@ impl<T: Deref<Target = [u8]>> SlotHashes<T> {
     ///
     /// Returns the index if the slot is found, or `None` if not found.
     /// Assumes entries are sorted by slot in descending order.
+    /// If calling repeatedly, prefer getting `entries()` in caller
+    /// to avoid repeated slice construction.
     pub fn position(&self, target_slot: Slot) -> Option<usize> {
         let entries = self.as_entries_slice();
         entries
             .binary_search_by(|probe_entry| probe_entry.slot().cmp(&target_slot).reverse())
             .ok()
+    }
+
+    /// Returns a `&[SlotHashEntry]` view into the underlying data.
+    #[inline(always)]
+    pub fn entries(&self) -> &[SlotHashEntry] {
+        self.as_entries_slice()
     }
 
     /// Returns a `&[SlotHashEntry]` view into the underlying data.
