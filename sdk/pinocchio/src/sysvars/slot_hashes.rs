@@ -197,12 +197,38 @@ impl<T: Deref<Target = [u8]>> SlotHashes<T> {
         unsafe { read_entry_count_from_bytes_unchecked(&self.data) }
     }
 
+    /// Validates offset parameters for fetching SlotHashes data.
+    ///
+    /// # Arguments
+    /// * `offset` - Byte offset within the sysvar data
+    /// * `buffer_len` - Length of the buffer that will receive the data
+    ///
+    /// # Returns
+    /// Ok(()) if the offset is valid, Err otherwise
+    fn validate_fetch_offset(offset: u64, buffer_len: usize) -> Result<(), ProgramError> {
+        if offset >= MAX_SIZE as u64 {
+            return Err(ProgramError::InvalidArgument);
+        }
+        if offset != 0
+            && (offset < NUM_ENTRIES_SIZE as u64
+                || (offset - NUM_ENTRIES_SIZE as u64) % ENTRY_SIZE as u64 != 0)
+        {
+            return Err(ProgramError::InvalidArgument);
+        }
+        if offset.saturating_add(buffer_len as u64) > MAX_SIZE as u64 {
+            return Err(ProgramError::InvalidArgument);
+        }
+
+        Ok(())
+    }
+
     /// Fetches the SlotHashes sysvar data directly via syscall into a provided buffer.
     ///
     /// # Arguments
     /// * `buffer` - A mutable slice to store the sysvar data. Must be at least 8 bytes
     ///   and the length must be 8 + (N * 40) for some N ≤ 512.
     /// * `offset` - Byte offset within the sysvar data to start fetching from.
+    ///   Must be 0 (start of data) or 8 + N*40 (start of entry N) for valid alignment.
     ///   Note: SlotHashes data starts with an 8-byte length prefix followed by entries.
     ///
     /// # Returns
@@ -214,6 +240,8 @@ impl<T: Deref<Target = [u8]>> SlotHashes<T> {
         if buffer.len() != MAX_SIZE {
             Self::validate_buffer_size(buffer.len())?;
         }
+
+        Self::validate_fetch_offset(offset, buffer.len())?;
 
         Self::fetch_into_unchecked(buffer, offset)?;
 
@@ -246,6 +274,8 @@ impl<T: Deref<Target = [u8]>> SlotHashes<T> {
     ///   on mainnet.
     /// * `offset` - Byte offset within the sysvar data to start fetching from.
     ///   Note: SlotHashes data starts with an 8-byte length prefix followed by entries.
+    ///   Must be 0 (start of data) or 8 + N*40 (start of entry N) for valid alignment,
+    ///   but this is not checked.
     ///
     /// # Returns
     /// Nothing - the caller constructs the SlotHashes view afterwards.
@@ -1007,6 +1037,54 @@ mod tests {
             assert_eq!(e.slot(), entries[i].0);
             assert_eq!(e.hash, entries[i].1);
         }
+    }
+
+    #[test]
+    fn test_fetch_into_offset_validation() {
+        // Test that offset validation works correctly
+        let buffer_len = 200;
+
+        // Test valid offsets
+
+        // Offset 0 (start of data) - should pass validation
+        assert!(SlotHashes::<&[u8]>::validate_fetch_offset(0, buffer_len).is_ok());
+
+        // Offset 8 (start of first entry) - should pass validation
+        assert!(SlotHashes::<&[u8]>::validate_fetch_offset(8, buffer_len).is_ok());
+
+        // Offset 48 (start of second entry) - should pass validation
+        assert!(SlotHashes::<&[u8]>::validate_fetch_offset(48, buffer_len).is_ok());
+
+        // Offset 88 (start of third entry) - should pass validation
+        assert!(SlotHashes::<&[u8]>::validate_fetch_offset(88, buffer_len).is_ok());
+
+        // Test invalid offsets that should fail validation
+
+        // Offset beyond MAX_SIZE
+        assert!(SlotHashes::<&[u8]>::validate_fetch_offset(MAX_SIZE as u64, buffer_len).is_err());
+
+        // Offset pointing mid-entry (not aligned)
+        assert!(SlotHashes::<&[u8]>::validate_fetch_offset(12, buffer_len).is_err()); // 8 + 4, mid-entry
+        assert!(SlotHashes::<&[u8]>::validate_fetch_offset(20, buffer_len).is_err()); // 8 + 12, mid-entry
+        assert!(SlotHashes::<&[u8]>::validate_fetch_offset(35, buffer_len).is_err()); // 8 + 27, mid-entry
+
+        // Offset in header but not at start
+        assert!(SlotHashes::<&[u8]>::validate_fetch_offset(4, buffer_len).is_err()); // Mid-header
+        assert!(SlotHashes::<&[u8]>::validate_fetch_offset(7, buffer_len).is_err()); // End of header
+
+        // Test buffer + offset exceeding MAX_SIZE
+        assert!(SlotHashes::<&[u8]>::validate_fetch_offset(1, MAX_SIZE).is_err());
+        assert!(SlotHashes::<&[u8]>::validate_fetch_offset(MAX_SIZE as u64 - 100, 200).is_err());
+
+        // Edge cases that should be valid
+        assert!(
+            SlotHashes::<&[u8]>::validate_fetch_offset(8 + 511 * ENTRY_SIZE as u64, 40).is_ok()
+        ); // Last entry
+
+        // Edge case that should be invalid (one past last valid entry)
+        assert!(
+            SlotHashes::<&[u8]>::validate_fetch_offset(8 + 512 * ENTRY_SIZE as u64, 40).is_err()
+        );
     }
 }
 
