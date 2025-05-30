@@ -94,11 +94,7 @@ fn validate_slothashes_constraints(
         return Err(ProgramError::InvalidArgument);
     }
 
-    // If declared entry count provided, validate it
     if let Some(declared) = declared_entries {
-        if declared > MAX_ENTRIES {
-            return Err(ProgramError::InvalidArgument);
-        }
         if declared > max_entries {
             return Err(ProgramError::InvalidArgument);
         }
