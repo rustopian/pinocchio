@@ -160,7 +160,6 @@ impl<T: Deref<Target = [u8]>> SlotHashes<T> {
     ///    (length prefix + entries, where entries are sorted in descending order by slot).
     /// 2. `len` is the correct number of entries (≤ MAX_ENTRIES), matching the prefix.
     /// 3. The data slice contains at least `NUM_ENTRIES_SIZE + len * ENTRY_SIZE` bytes.
-    /// 4. Alignment is correct for SlotHashEntry access.
     ///
     #[inline]
     pub unsafe fn new_unchecked(data: T, len: usize) -> Self {
