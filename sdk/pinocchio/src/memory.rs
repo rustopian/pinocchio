@@ -96,7 +96,7 @@ pub fn copy_val<T: ?Sized>(dst: &mut T, src: &T) {
 ///
 /// [`ptr::copy`]: https://doc.rust-lang.org/std/ptr/fn.copy.html
 #[inline]
-pub unsafe fn sol_memmove(dst: *mut u8, src: *mut u8, n: usize) {
+pub unsafe fn sol_memmove(dst: *mut u8, src: *const u8, n: usize) {
     #[cfg(target_os = "solana")]
     syscalls::sol_memmove_(dst, src, n as u64);
 

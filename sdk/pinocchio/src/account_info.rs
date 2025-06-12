@@ -495,10 +495,9 @@ impl AccountInfo {
     /// Zero out the the account's data length, lamports and owner fields, effectively
     /// closing the account.
     ///
-    /// This doesn't protect against future reinitialization of the account
-    /// since the account data will need to be zeroed out as well; otherwise the lenght,
-    /// lamports and owner can be set again before the data is wiped out from
-    /// the ledger using the keypair of the account being closed.
+    /// Note: This does not zero the account data. The account data will be zeroed by
+    /// the runtime at the end of the instruction where the account was closed or at the
+    /// next CPI call.
     ///
     /// # Important
     ///
@@ -523,10 +522,9 @@ impl AccountInfo {
     /// Zero out the the account's data length, lamports and owner fields, effectively
     /// closing the account.
     ///
-    /// This doesn't protect against future reinitialization of the account
-    /// since the account data will need to be zeroed out as well; otherwise the lenght,
-    /// lamports and owner can be set again before the data is wiped out from
-    /// the ledger using the keypair of the account being closed.
+    /// Note: This does not zero the account data. The account data will be zeroed by
+    /// the runtime at the end of the instruction where the account was closed or at the
+    /// next CPI call.
     ///
     /// # Important
     ///
@@ -556,7 +554,7 @@ impl AccountInfo {
 
     /// Returns the memory address of the account data.
     fn data_ptr(&self) -> *mut u8 {
-        unsafe { (self.raw as *const _ as *mut u8).add(core::mem::size_of::<Account>()) }
+        unsafe { (self.raw as *mut u8).add(core::mem::size_of::<Account>()) }
     }
 }
 
@@ -717,12 +715,13 @@ mod tests {
     #[test]
     fn test_data_ref() {
         let data: [u8; 4] = [0, 1, 2, 3];
-        let state = 1 << DATA_SHIFT;
+        let mut state = 1 << DATA_SHIFT;
 
         let ref_data = Ref {
             value: NonNull::from(&data),
             borrow_shift: DATA_SHIFT,
-            state: NonNull::from(&state),
+            // borrow state must be a mutable reference
+            state: NonNull::from(&mut state),
             marker: PhantomData,
         };
 
@@ -751,12 +750,13 @@ mod tests {
     #[test]
     fn test_lamports_ref() {
         let lamports: u64 = 10000;
-        let state = 1 << LAMPORTS_SHIFT;
+        let mut state = 1 << LAMPORTS_SHIFT;
 
         let ref_lamports = Ref {
             value: NonNull::from(&lamports),
             borrow_shift: LAMPORTS_SHIFT,
-            state: NonNull::from(&state),
+            // borrow state must be a mutable reference
+            state: NonNull::from(&mut state),
             marker: PhantomData,
         };
 
@@ -784,13 +784,14 @@ mod tests {
 
     #[test]
     fn test_data_ref_mut() {
-        let data: [u8; 4] = [0, 1, 2, 3];
-        let state = 0b_0000_1000;
+        let mut data: [u8; 4] = [0, 1, 2, 3];
+        let mut state = 0b_0000_1000;
 
         let ref_data = RefMut {
-            value: NonNull::from(&data),
+            value: NonNull::from(&mut data),
             borrow_mask: DATA_MASK,
-            state: NonNull::from(&state),
+            // borrow state must be a mutable reference
+            state: NonNull::from(&mut state),
             marker: PhantomData,
         };
 
@@ -811,13 +812,14 @@ mod tests {
 
     #[test]
     fn test_lamports_ref_mut() {
-        let lamports: u64 = 10000;
-        let state = 0b_1000_0000;
+        let mut lamports: u64 = 10000;
+        let mut state = 0b_1000_0000;
 
         let ref_lamports = RefMut {
-            value: NonNull::from(&lamports),
+            value: NonNull::from(&mut lamports),
             borrow_mask: LAMPORTS_MASK,
-            state: NonNull::from(&state),
+            // borrow state must be a mutable reference
+            state: NonNull::from(&mut state),
             marker: PhantomData,
         };
 
