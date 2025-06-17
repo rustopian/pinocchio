@@ -44,6 +44,10 @@ const _: [(); 1] = [(); mem::align_of::<SlotHashEntry>()];
 /// SlotHashes provides read-only, zero-copy access to SlotHashes sysvar bytes.
 pub struct SlotHashes<T: Deref<Target = [u8]>> {
     data: T,
+    /// Pointer to the first `SlotHashEntry` in `data` (or null if `len == 0`).
+    /// Filled exactly once in `new_unchecked` and never modified afterwards.
+    /// This avoids recomputing the pointer on every call to `as_entries_slice`.
+    entries: *const SlotHashEntry,
     len: usize,
 }
 
@@ -160,7 +164,18 @@ impl<T: Deref<Target = [u8]>> SlotHashes<T> {
     #[inline]
     pub unsafe fn new_unchecked(data: T, len: usize) -> Self {
         debug_assert!(len <= MAX_ENTRIES && data.len() >= NUM_ENTRIES_SIZE + len * ENTRY_SIZE);
-        SlotHashes { data, len }
+
+        let entries_ptr = if len == 0 {
+            core::ptr::null()
+        } else {
+            data.as_ptr().add(NUM_ENTRIES_SIZE) as *const SlotHashEntry
+        };
+
+        SlotHashes {
+            data,
+            entries: entries_ptr,
+            len,
+        }
     }
 
     /// Gets the number of entries stored in this SlotHashes instance.
@@ -352,9 +367,7 @@ impl<T: Deref<Target = [u8]>> SlotHashes<T> {
 
         debug_assert!(self.data.len() >= NUM_ENTRIES_SIZE + self.len * ENTRY_SIZE);
 
-        let entries_ptr =
-            unsafe { self.data.as_ptr().add(NUM_ENTRIES_SIZE) as *const SlotHashEntry };
-        unsafe { core::slice::from_raw_parts(entries_ptr, self.len) }
+        unsafe { core::slice::from_raw_parts(self.entries, self.len) }
     }
 
     /// # Safety
@@ -362,8 +375,7 @@ impl<T: Deref<Target = [u8]>> SlotHashes<T> {
     #[inline(always)]
     pub unsafe fn get_entry_unchecked(&self, index: usize) -> &SlotHashEntry {
         debug_assert!(index < self.len);
-        let offset = NUM_ENTRIES_SIZE + index * ENTRY_SIZE;
-        &*(self.data.as_ptr().add(offset) as *const SlotHashEntry)
+        &*self.entries.add(index)
     }
 }
 
