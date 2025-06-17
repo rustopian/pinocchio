@@ -44,9 +44,10 @@ const _: [(); 1] = [(); mem::align_of::<SlotHashEntry>()];
 /// SlotHashes provides read-only, zero-copy access to SlotHashes sysvar bytes.
 pub struct SlotHashes<T: Deref<Target = [u8]>> {
     data: T,
-    /// Pointer to the first `SlotHashEntry` in `data` (or null if `len == 0`).
-    /// Filled exactly once in `new_unchecked` and never modified afterwards.
-    /// This avoids recomputing the pointer on every call to `as_entries_slice`.
+    /// Pointer to the first `SlotHashEntry` in `data` (always valid; it is
+    /// never dereferenced when `len == 0`). Filled exactly once in
+    /// `new_unchecked` and never modified afterwards. This avoids recomputing
+    /// the pointer on every call to `as_entries_slice`.
     entries: *const SlotHashEntry,
     len: usize,
 }
@@ -165,11 +166,12 @@ impl<T: Deref<Target = [u8]>> SlotHashes<T> {
     pub unsafe fn new_unchecked(data: T, len: usize) -> Self {
         debug_assert!(len <= MAX_ENTRIES && data.len() >= NUM_ENTRIES_SIZE + len * ENTRY_SIZE);
 
-        let entries_ptr = if len == 0 {
-            core::ptr::null()
-        } else {
-            data.as_ptr().add(NUM_ENTRIES_SIZE) as *const SlotHashEntry
-        };
+        // Compute the slice start once; pointer arithmetic here is within the
+        // original buffer (we already asserted it has at least
+        // `NUM_ENTRIES_SIZE` bytes). Using raw pointer `add` keeps the
+        // instruction count minimal; zero-entry SlotHashes is not a scenario
+        // this unchecked path cares about.
+        let entries_ptr = data.as_ptr().add(NUM_ENTRIES_SIZE) as *const SlotHashEntry;
 
         SlotHashes {
             data,
