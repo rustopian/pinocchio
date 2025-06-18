@@ -81,6 +81,7 @@ pub(crate) unsafe fn read_entry_count_from_bytes_unchecked(data: &[u8]) -> usize
 ///
 /// # Returns
 /// The maximum entries that fit in the buffer, or error if constraints violated
+#[inline]
 fn validate_slothashes_constraints(
     buffer_len: usize,
     declared_entries: Option<usize>,
@@ -112,6 +113,7 @@ fn validate_slothashes_constraints(
 }
 
 /// Validates SlotHashes data format and returns the entry count.
+#[inline]
 fn parse_and_validate_data(data: &[u8]) -> Result<usize, ProgramError> {
     // Need at least the 8-byte length prefix.
     if data.len() < NUM_ENTRIES_SIZE {
@@ -135,7 +137,7 @@ impl<T: Deref<Target = [u8]>> SlotHashes<T> {
     /// Validates that a buffer is properly sized for SlotHashes data.
     ///
     /// Checks that the buffer length is 8 + (N * 40) for some N ≤ 512.
-    #[inline]
+    #[inline(always)]
     pub(crate) fn validate_buffer_size(buffer_len: usize) -> Result<(), ProgramError> {
         validate_slothashes_constraints(buffer_len, None)?;
         Ok(())
@@ -146,6 +148,7 @@ impl<T: Deref<Target = [u8]>> SlotHashes<T> {
     /// This constructor performs comprehensive validation of the data format
     /// including length prefix, entry count bounds, and buffer size requirements.
     /// Does not validate that entries are sorted in descending order.
+    #[inline(always)]
     pub fn new(data: T) -> Result<Self, ProgramError> {
         let num_entries = parse_and_validate_data(&data)?;
         Ok(unsafe { Self::new_unchecked(data, num_entries) })
@@ -164,7 +167,7 @@ impl<T: Deref<Target = [u8]>> SlotHashes<T> {
     /// 2. `len` is the correct number of entries (≤ MAX_ENTRIES), matching the prefix.
     /// 3. The data slice contains at least `NUM_ENTRIES_SIZE + len * ENTRY_SIZE` bytes.
     ///
-    #[inline]
+    #[inline(always)]
     pub unsafe fn new_unchecked(data: T, len: usize) -> Self {
         debug_assert!(len <= MAX_ENTRIES && data.len() >= NUM_ENTRIES_SIZE + len * ENTRY_SIZE);
 
@@ -183,6 +186,7 @@ impl<T: Deref<Target = [u8]>> SlotHashes<T> {
 
     /// Gets the number of entries stored in this SlotHashes instance.
     /// Performs validation checks and returns the entry count if valid.
+    #[inline(always)]
     pub fn get_entry_count(&self) -> Result<usize, ProgramError> {
         let data_entry_count = read_entry_count_from_bytes(&self.data).unwrap_or(0);
         if data_entry_count != self.len {
@@ -214,6 +218,7 @@ impl<T: Deref<Target = [u8]>> SlotHashes<T> {
     ///
     /// # Returns
     /// Ok(()) if the offset is valid, Err otherwise
+    #[inline(always)]
     pub(crate) fn validate_fetch_offset(
         offset: u64,
         buffer_len: usize,
@@ -247,6 +252,7 @@ impl<T: Deref<Target = [u8]>> SlotHashes<T> {
     /// The actual number of entries found in the sysvar data.
     ///
     /// For most use cases, prefer `from_account_info()` which provides zero-copy access.
+    #[inline(always)]
     pub fn fetch_into(buffer: &mut [u8], offset: u64) -> Result<usize, ProgramError> {
         if buffer.len() != MAX_SIZE {
             Self::validate_buffer_size(buffer.len())?;
@@ -290,6 +296,7 @@ impl<T: Deref<Target = [u8]>> SlotHashes<T> {
     /// Nothing - the caller constructs the SlotHashes view afterwards.
     ///
     /// For most use cases, prefer `from_account_info()` which provides zero-copy access.
+    #[inline(always)]
     pub fn fetch_into_unchecked(buffer: &mut [u8], offset: u64) -> Result<(), ProgramError> {
         // Fetch sysvar data into caller-provided buffer.
         let result = unsafe {
@@ -339,6 +346,7 @@ impl<T: Deref<Target = [u8]>> SlotHashes<T> {
     /// Assumes entries are sorted by slot in descending order.
     /// If calling repeatedly, prefer getting `entries()` in caller
     /// to avoid repeated slice construction.
+    #[inline(always)]
     pub fn get_hash(&self, target_slot: Slot) -> Option<&[u8; HASH_BYTES]> {
         let entries = self.as_entries_slice();
         entries
@@ -353,6 +361,7 @@ impl<T: Deref<Target = [u8]>> SlotHashes<T> {
     /// Assumes entries are sorted by slot in descending order.
     /// If calling repeatedly, prefer getting `entries()` in caller
     /// to avoid repeated slice construction.
+    #[inline(always)]
     pub fn position(&self, target_slot: Slot) -> Option<usize> {
         let entries = self.as_entries_slice();
         entries
@@ -399,6 +408,7 @@ impl<'a> SlotHashes<Ref<'a, [u8]>> {
     ///
     /// This function verifies that:
     /// - The account key matches the `SLOTHASHES_ID`
+    #[inline(always)]
     pub fn from_account_info(account_info: &'a AccountInfo) -> Result<Self, ProgramError> {
         if account_info.key() != &SLOTHASHES_ID {
             return Err(ProgramError::InvalidArgument);
@@ -418,6 +428,7 @@ impl<'a> SlotHashes<Ref<'a, [u8]>> {
 impl SlotHashes<std::vec::Vec<u8>> {
     /// Fetches the SlotHashes sysvar data directly via syscall. This copies
     /// the full sysvar data (`MAX_SIZE` bytes).
+    #[inline(always)]
     pub fn fetch() -> Result<Self, ProgramError> {
         let mut data = std::vec![0u8; MAX_SIZE];
 
