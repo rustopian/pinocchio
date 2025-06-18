@@ -1,10 +1,11 @@
-#[cfg(test)]
-use super::*;
+#![cfg(test)]
 mod tests {
-    use super::*;
+    use crate::{
+        program_error::ProgramError,
+        sysvars::{clock::Slot, slot_hashes::*},
+    };
     use core::mem::{align_of, size_of};
     extern crate std;
-    #[allow(unused_imports)]
     use std::vec::Vec;
 
     #[test]
@@ -386,18 +387,15 @@ mod tests {
 
         // Test ExactSizeIterator hint
         let mut iter_hint = slot_hashes.into_iter();
-        assert_eq!(iter_hint.size_hint(), (NUM_ENTRIES, Some(NUM_ENTRIES)));
+        assert_eq!(iter_hint.len(), NUM_ENTRIES);
         iter_hint.next();
-        assert_eq!(
-            iter_hint.size_hint(),
-            (NUM_ENTRIES - 1, Some(NUM_ENTRIES - 1))
-        );
+        assert_eq!(iter_hint.len(), NUM_ENTRIES - 1);
         // Skip to end
         for _ in 1..NUM_ENTRIES {
             iter_hint.next();
         }
         iter_hint.next();
-        assert_eq!(iter_hint.size_hint(), (0, Some(0)));
+        assert_eq!(iter_hint.len(), 0);
 
         // Test empty case
         let empty_data = create_mock_data(&[]);
@@ -745,10 +743,13 @@ mod tests {
 
 #[cfg(test)]
 mod edge_tests {
-    use super::*;
     extern crate std;
-    use crate::account_info::{Account, AccountInfo};
-    use crate::pubkey::Pubkey;
+    use crate::{
+        account_info::{Account, AccountInfo},
+        program_error::ProgramError,
+        pubkey::Pubkey,
+        sysvars::slot_hashes::*,
+    };
     use core::{mem, ptr};
     use std::vec::Vec;
 
@@ -776,7 +777,9 @@ mod edge_tests {
             data_len: u64,
         }
         let hdr_len = mem::size_of::<Header>();
-        let mut backing = std::vec![0u8; hdr_len + data.len()];
+        let total = hdr_len + data.len();
+        let words = (total + 7) / 8;
+        let mut backing: std::vec::Vec<u64> = std::vec![0u64; words];
         let hdr_ptr = backing.as_mut_ptr() as *mut Header;
         ptr::write(
             hdr_ptr,
@@ -792,7 +795,7 @@ mod edge_tests {
                 data_len: data.len() as u64,
             },
         );
-        ptr::copy_nonoverlapping(data.as_ptr(), backing.as_mut_ptr().add(hdr_len), data.len());
+        ptr::copy_nonoverlapping(data.as_ptr(), (hdr_ptr as *mut u8).add(hdr_len), data.len());
         core::mem::forget(backing);
         AccountInfo {
             raw: hdr_ptr as *mut Account,

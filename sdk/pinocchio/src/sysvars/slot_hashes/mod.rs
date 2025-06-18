@@ -1,5 +1,8 @@
 //! Efficient, zero-copy access to SlotHashes sysvar data.
 
+#[cfg(test)]
+mod tests;
+
 use crate::{
     account_info::{AccountInfo, Ref},
     program_error::ProgramError,
@@ -46,8 +49,7 @@ pub struct SlotHashes<T: Deref<Target = [u8]>> {
     data: T,
     /// Pointer to the first `SlotHashEntry` in `data` (always valid; it is
     /// never dereferenced when `len == 0`). Filled exactly once in
-    /// `new_unchecked` and never modified afterwards. This avoids recomputing
-    /// the pointer on every call to `as_entries_slice`.
+    /// `new_unchecked`.
     entries: *const SlotHashEntry,
     len: usize,
 }
@@ -55,7 +57,7 @@ pub struct SlotHashes<T: Deref<Target = [u8]>> {
 /// Reads the entry count from the first 8 bytes of data.
 /// Returns None if the data is too short.
 #[inline(always)]
-fn read_entry_count_from_bytes(data: &[u8]) -> Option<usize> {
+pub(crate) fn read_entry_count_from_bytes(data: &[u8]) -> Option<usize> {
     if data.len() < NUM_ENTRIES_SIZE {
         return None;
     }
@@ -67,7 +69,7 @@ fn read_entry_count_from_bytes(data: &[u8]) -> Option<usize> {
 /// # Safety
 /// Caller must ensure data has at least NUM_ENTRIES_SIZE bytes.
 #[inline(always)]
-unsafe fn read_entry_count_from_bytes_unchecked(data: &[u8]) -> usize {
+pub(crate) unsafe fn read_entry_count_from_bytes_unchecked(data: &[u8]) -> usize {
     u64::from_le_bytes(*(data.as_ptr() as *const [u8; 8])) as usize
 }
 
@@ -134,7 +136,7 @@ impl<T: Deref<Target = [u8]>> SlotHashes<T> {
     ///
     /// Checks that the buffer length is 8 + (N * 40) for some N ≤ 512.
     #[inline]
-    fn validate_buffer_size(buffer_len: usize) -> Result<(), ProgramError> {
+    pub(crate) fn validate_buffer_size(buffer_len: usize) -> Result<(), ProgramError> {
         validate_slothashes_constraints(buffer_len, None)?;
         Ok(())
     }
@@ -212,7 +214,10 @@ impl<T: Deref<Target = [u8]>> SlotHashes<T> {
     ///
     /// # Returns
     /// Ok(()) if the offset is valid, Err otherwise
-    fn validate_fetch_offset(offset: u64, buffer_len: usize) -> Result<(), ProgramError> {
+    pub(crate) fn validate_fetch_offset(
+        offset: u64,
+        buffer_len: usize,
+    ) -> Result<(), ProgramError> {
         if offset >= MAX_SIZE as u64 {
             return Err(ProgramError::InvalidArgument);
         }
@@ -422,7 +427,3 @@ impl SlotHashes<std::vec::Vec<u8>> {
         Ok(unsafe { Self::new_unchecked(data, num_entries) })
     }
 }
-
-#[cfg(test)]
-#[path = "tests/slot_hashes_tests.rs"]
-mod slot_hashes_tests;
