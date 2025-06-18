@@ -763,7 +763,12 @@ mod edge_tests {
         v
     }
 
-    unsafe fn account_info_with(key: Pubkey, data: &[u8]) -> AccountInfo {
+    struct AccountInfoWithBacking {
+        info: AccountInfo,
+        _backing: std::vec::Vec<u64>,
+    }
+
+    unsafe fn account_info_with(key: Pubkey, data: &[u8]) -> AccountInfoWithBacking {
         #[repr(C)]
         struct Header {
             borrow_state: u8,
@@ -796,18 +801,20 @@ mod edge_tests {
             },
         );
         ptr::copy_nonoverlapping(data.as_ptr(), (hdr_ptr as *mut u8).add(hdr_len), data.len());
-        core::mem::forget(backing);
-        AccountInfo {
-            raw: hdr_ptr as *mut Account,
+        AccountInfoWithBacking {
+            info: AccountInfo {
+                raw: hdr_ptr as *mut Account,
+            },
+            _backing: backing,
         }
     }
 
     #[test]
     fn wrong_key_from_account_info() {
         let bytes = raw_slot_hashes(0, &[]);
-        let acct = unsafe { account_info_with([1u8; 32], &bytes) };
+        let acct_with = unsafe { account_info_with([1u8; 32], &bytes) };
         assert!(matches!(
-            SlotHashes::from_account_info(&acct),
+            SlotHashes::from_account_info(&acct_with.info),
             Err(ProgramError::InvalidArgument)
         ));
     }
