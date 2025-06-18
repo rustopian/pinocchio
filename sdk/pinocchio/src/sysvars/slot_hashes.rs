@@ -168,8 +168,7 @@ impl<T: Deref<Target = [u8]>> SlotHashes<T> {
 
         // Compute the slice start once; pointer arithmetic here is within the
         // original buffer (we already asserted it has at least
-        // `NUM_ENTRIES_SIZE` bytes). Using raw pointer `add` keeps the
-        // instruction count minimal; zero-entry SlotHashes is not a scenario
+        // `NUM_ENTRIES_SIZE` bytes). Zero-entry SlotHashes is not a scenario
         // this unchecked path cares about.
         let entries_ptr = data.as_ptr().add(NUM_ENTRIES_SIZE) as *const SlotHashEntry;
 
