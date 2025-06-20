@@ -9,7 +9,9 @@ use crate::{
     pubkey::Pubkey,
     sysvars::clock::Slot,
 };
-use core::{mem, num, ops::Deref, slice::from_raw_parts};
+use core::{mem, ops::Deref, slice::from_raw_parts};
+#[cfg(feature = "std")]
+use std::boxed::Box;
 
 /// SysvarS1otHashes111111111111111111111111111
 pub const SLOTHASHES_ID: Pubkey = [
@@ -207,19 +209,18 @@ impl<T: Deref<Target = [u8]>> SlotHashes<T> {
     /// Ok(()) if the offset is valid, Err otherwise
     #[inline(always)]
     pub(crate) fn validate_fetch_offset(
-        offset: u64,
+        offset: usize,
         buffer_len: usize,
     ) -> Result<(), ProgramError> {
-        if offset >= MAX_SIZE as u64 {
+        if offset >= MAX_SIZE {
             return Err(ProgramError::InvalidArgument);
         }
         if offset != 0
-            && (offset < NUM_ENTRIES_SIZE as u64
-                || (offset - NUM_ENTRIES_SIZE as u64) % ENTRY_SIZE as u64 != 0)
+            && (offset < NUM_ENTRIES_SIZE || (offset - NUM_ENTRIES_SIZE) % ENTRY_SIZE != 0)
         {
             return Err(ProgramError::InvalidArgument);
         }
-        if offset.saturating_add(buffer_len as u64) > MAX_SIZE as u64 {
+        if offset.saturating_add(buffer_len) > MAX_SIZE {
             return Err(ProgramError::InvalidArgument);
         }
 
@@ -240,7 +241,7 @@ impl<T: Deref<Target = [u8]>> SlotHashes<T> {
     ///
     /// For most use cases, prefer `from_account_info()` which provides zero-copy access.
     #[inline(always)]
-    pub fn fetch_into(buffer: &mut [u8], offset: u64) -> Result<usize, ProgramError> {
+    pub fn fetch_into(buffer: &mut [u8], offset: usize) -> Result<usize, ProgramError> {
         if buffer.len() != MAX_SIZE {
             Self::validate_buffer_size(buffer.len())?;
         }
@@ -284,20 +285,16 @@ impl<T: Deref<Target = [u8]>> SlotHashes<T> {
     ///
     /// For most use cases, prefer `from_account_info()` which provides zero-copy access.
     #[inline(always)]
-    pub fn fetch_into_unchecked(buffer: &mut [u8], offset: u64) -> Result<(), ProgramError> {
+    pub fn fetch_into_unchecked(buffer: &mut [u8], offset: usize) -> Result<(), ProgramError> {
         // Fetch sysvar data into caller-provided buffer.
-        let result = unsafe {
-            crate::syscalls::sol_get_sysvar(
-                SLOTHASHES_ID.as_ptr(),
+        unsafe {
+            crate::sysvars::get_sysvar_unchecked(
                 buffer.as_mut_ptr(),
+                &SLOTHASHES_ID,
                 offset,
-                buffer.len() as u64, // length
+                buffer.len(),
             )
-        };
-
-        if result != 0 {
-            return Err(ProgramError::InvalidArgument);
-        }
+        }?;
 
         Ok(())
     }
@@ -369,7 +366,12 @@ impl<T: Deref<Target = [u8]>> SlotHashes<T> {
 
         debug_assert!(self.data.len() >= NUM_ENTRIES_SIZE + self.len * ENTRY_SIZE);
 
-        unsafe { from_raw_parts(self.data.as_ptr().add(NUM_ENTRIES_SIZE) as *const SlotHashEntry, self.len) }
+        unsafe {
+            from_raw_parts(
+                self.data.as_ptr().add(NUM_ENTRIES_SIZE) as *const SlotHashEntry,
+                self.len,
+            )
+        }
     }
 
     /// Returns a reference to the entry at `index` **without** bounds checking.
@@ -415,25 +417,27 @@ impl<'a> SlotHashes<Ref<'a, [u8]>> {
 }
 
 #[cfg(feature = "std")]
-impl SlotHashes<'_, Box<[u8]>> {
+impl SlotHashes<Box<[u8]>> {
     /// Fetches the SlotHashes sysvar data directly via syscall. This copies
     /// the full sysvar data (`MAX_SIZE` bytes).
     #[inline(always)]
     pub fn fetch() -> Result<Self, ProgramError> {
         let mut data = Box::new_uninit_slice(MAX_SIZE);
 
-        // SAFETY: The destination buffer has the same length as the requested
-        // sysvar data.
+        // SAFETY: Buffer length matches requested length.
         unsafe {
-            get_sysvar_unchecked(
+            crate::sysvars::get_sysvar_unchecked(
                 data.as_mut_ptr() as *mut _ as *mut u8,
                 &SLOTHASHES_ID,
                 0,
                 MAX_SIZE,
-            )?;
-        }
+            )
+        }?;
+
+        let data_init = unsafe { data.assume_init() };
+        let num_entries = unsafe { read_entry_count_from_bytes_unchecked(&data_init) };
 
         // SAFETY: The data was initialized by the syscall.
-        Ok(unsafe { SlotHashes::new_unchecked(data.assume_init()) })
+        Ok(unsafe { SlotHashes::new_unchecked(data_init, num_entries) })
     }
 }

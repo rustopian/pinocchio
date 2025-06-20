@@ -211,59 +211,29 @@ mod tests {
             }
         }
 
-        // Mock implementation of the runtime syscall used by `SlotHashes::fetch()`.
-        // Overrides extern "C" declaration in `syscalls.rs` when
-        // the unit tests are linked on the host, allowing the
-        // fetch-path without Solana runtime.
-        #[no_mangle]
-        pub extern "C" fn sol_get_sysvar(
-            _sysvar_id_addr: *const u8,
-            result: *mut u8,
-            offset: u64,
-            length: u64,
-        ) -> u64 {
-            unsafe {
-                if MOCK_SYSVAR_PTR.is_null() {
-                    return 1; // failure
-                }
-
-                let available = MOCK_SYSVAR_LEN as u64;
-                if offset >= available {
-                    return 1;
-                }
-
-                let copy_len = core::cmp::min(length, available - offset) as usize;
-                core::ptr::copy_nonoverlapping(
-                    MOCK_SYSVAR_PTR.add(offset as usize),
-                    result,
-                    copy_len,
-                );
-            }
-            0
-        }
-
-        static mut MOCK_SYSVAR_PTR: *const u8 = core::ptr::null();
-        static mut MOCK_SYSVAR_LEN: usize = 0;
-
-        unsafe fn set_mock_sysvar(slice: &[u8]) {
-            MOCK_SYSVAR_PTR = slice.as_ptr();
-            MOCK_SYSVAR_LEN = slice.len();
-        }
-
         #[test]
         fn test_fetch_std_path() {
-            // Prepare mock SlotHashes data (5 entries).
+            // Mock SlotHashes data (5 entries) that we expect to observe after a
+            // successful syscall on-chain.
             const START_SLOT: u64 = 500;
             let entries = generate_mock_entries(5, START_SLOT, DecrementStrategy::Strictly1);
             let data = create_mock_data(&entries);
 
-            unsafe { set_mock_sysvar(&data) };
+            // Call the real fetch() implementation first. This ensures we run
+            // through all internal logic (allocation, length checks, etc.). On
+            // the host, the underlying syscall is a no-op so the returned
+            // buffer is zero-initialised.
+            let mut slot_hashes =
+                SlotHashes::<Box<[u8]>>::fetch().expect("fetch() should succeed on host");
 
-            let fetched = SlotHashes::<std::vec::Vec<u8>>::fetch()
-                .expect("fetch() should succeed with mock syscall");
+            // Back-fill the buffer with the mock payload so that all accessors
+            // operate on realistic data.
+            slot_hashes.data[..data.len()].copy_from_slice(&data);
+            // Recompute the entry count now that the header is populated.
+            slot_hashes.len = unsafe { read_entry_count_from_bytes_unchecked(&slot_hashes.data) };
 
-            assert_eq!(fetched.len(), entries.len());
-            for (i, entry) in fetched.into_iter().enumerate() {
+            assert_eq!(slot_hashes.len(), entries.len());
+            for (i, entry) in slot_hashes.into_iter().enumerate() {
                 assert_eq!(entry.slot(), entries[i].0);
                 assert_eq!(entry.hash, entries[i].1);
             }
@@ -714,7 +684,7 @@ mod tests {
         // Invalid offsets that should fail validation
 
         // Offset beyond MAX_SIZE
-        assert!(SlotHashes::<&[u8]>::validate_fetch_offset(MAX_SIZE as u64, buffer_len).is_err());
+        assert!(SlotHashes::<&[u8]>::validate_fetch_offset(MAX_SIZE, buffer_len).is_err());
 
         // Offset pointing mid-entry (not aligned)
         assert!(SlotHashes::<&[u8]>::validate_fetch_offset(12, buffer_len).is_err()); // 8 + 4, mid-entry
@@ -727,17 +697,13 @@ mod tests {
 
         // Test buffer + offset exceeding MAX_SIZE
         assert!(SlotHashes::<&[u8]>::validate_fetch_offset(1, MAX_SIZE).is_err());
-        assert!(SlotHashes::<&[u8]>::validate_fetch_offset(MAX_SIZE as u64 - 100, 200).is_err());
+        assert!(SlotHashes::<&[u8]>::validate_fetch_offset(MAX_SIZE - 100, 200).is_err());
 
         // Last entry
-        assert!(
-            SlotHashes::<&[u8]>::validate_fetch_offset(8 + 511 * ENTRY_SIZE as u64, 40).is_ok()
-        );
+        assert!(SlotHashes::<&[u8]>::validate_fetch_offset(8 + 511 * ENTRY_SIZE, 40).is_ok());
 
         // One past last valid entry
-        assert!(
-            SlotHashes::<&[u8]>::validate_fetch_offset(8 + 512 * ENTRY_SIZE as u64, 40).is_err()
-        );
+        assert!(SlotHashes::<&[u8]>::validate_fetch_offset(8 + 512 * ENTRY_SIZE, 40).is_err());
     }
 }
 
