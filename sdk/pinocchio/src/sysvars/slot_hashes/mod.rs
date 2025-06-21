@@ -333,10 +333,7 @@ impl<T: Deref<Target = [u8]>> SlotHashes<T> {
     #[inline(always)]
     pub fn get_hash(&self, target_slot: Slot) -> Option<&[u8; HASH_BYTES]> {
         let entries = self.as_entries_slice();
-        entries
-            .binary_search_by(|probe_entry| probe_entry.slot().cmp(&target_slot).reverse())
-            .ok()
-            .map(|index| &entries[index].hash)
+        self.position(target_slot).map(|index| &entries[index].hash)
     }
 
     /// Finds the position (index) of a specific slot using binary search.
@@ -360,10 +357,6 @@ impl<T: Deref<Target = [u8]>> SlotHashes<T> {
     /// the slice is big enough and properly aligned.
     #[inline(always)]
     fn as_entries_slice(&self) -> &[SlotHashEntry] {
-        if self.len == 0 {
-            return &[];
-        }
-
         debug_assert!(self.data.len() >= NUM_ENTRIES_SIZE + self.len * ENTRY_SIZE);
 
         unsafe {
@@ -381,8 +374,7 @@ impl<T: Deref<Target = [u8]>> SlotHashes<T> {
     #[inline(always)]
     pub unsafe fn get_entry_unchecked(&self, index: usize) -> &SlotHashEntry {
         debug_assert!(index < self.len);
-        let base = self.data.as_ptr().add(NUM_ENTRIES_SIZE) as *const SlotHashEntry;
-        &*base.add(index)
+        &self.as_entries_slice()[index]
     }
 }
 
