@@ -60,7 +60,7 @@ pub(crate) fn read_entry_count_from_bytes(data: &[u8]) -> Option<usize> {
     if data.len() < NUM_ENTRIES_SIZE {
         return None;
     }
-    Some(unsafe { u64::from_le_bytes(*(data.as_ptr() as *const [u8; 8])) } as usize)
+    Some(unsafe { u64::from_le_bytes(*(data.as_ptr() as *const [u8; NUM_ENTRIES_SIZE])) } as usize)
 }
 
 /// Reads the entry count from the first 8 bytes of data.
@@ -115,11 +115,7 @@ fn validate_slothashes_constraints(
 #[inline]
 fn parse_and_validate_data(data: &[u8]) -> Result<usize, ProgramError> {
     // Need at least the 8-byte length prefix.
-    if data.len() < NUM_ENTRIES_SIZE {
-        return Err(ProgramError::AccountDataTooSmall);
-    }
-
-    let num_entries = unsafe { read_entry_count_from_bytes_unchecked(data) };
+    let num_entries = read_entry_count_from_bytes(data).ok_or(ProgramError::AccountDataTooSmall)?;
 
     validate_slothashes_constraints(data.len(), Some(num_entries))
 }
