@@ -129,15 +129,6 @@ impl SlotHashEntry {
 }
 
 impl<T: Deref<Target = [u8]>> SlotHashes<T> {
-    /// Validates that a buffer is properly sized for SlotHashes data.
-    ///
-    /// Checks that the buffer length is 8 + (N * 40) for some N ≤ 512.
-    #[inline(always)]
-    pub(crate) fn validate_buffer_size(buffer_len: usize) -> Result<(), ProgramError> {
-        validate_slothashes_constraints(buffer_len, None)?;
-        Ok(())
-    }
-
     /// Creates a `SlotHashes` instance from arbitrary data with full validation.
     ///
     /// This constructor performs comprehensive validation of the data format
@@ -193,106 +184,6 @@ impl<T: Deref<Target = [u8]>> SlotHashes<T> {
     #[inline(always)]
     pub unsafe fn get_entry_count_unchecked(&self) -> usize {
         read_entry_count_from_bytes_unchecked(&self.data)
-    }
-
-    /// Validates offset parameters for fetching SlotHashes data.
-    ///
-    /// # Arguments
-    /// * `offset` - Byte offset within the sysvar data
-    /// * `buffer_len` - Length of the buffer that will receive the data
-    ///
-    /// # Returns
-    /// Ok(()) if the offset is valid, Err otherwise
-    #[inline(always)]
-    pub(crate) fn validate_fetch_offset(
-        offset: usize,
-        buffer_len: usize,
-    ) -> Result<(), ProgramError> {
-        if offset >= MAX_SIZE {
-            return Err(ProgramError::InvalidArgument);
-        }
-        if offset != 0
-            && (offset < NUM_ENTRIES_SIZE || (offset - NUM_ENTRIES_SIZE) % ENTRY_SIZE != 0)
-        {
-            return Err(ProgramError::InvalidArgument);
-        }
-        if offset.saturating_add(buffer_len) > MAX_SIZE {
-            return Err(ProgramError::InvalidArgument);
-        }
-
-        Ok(())
-    }
-
-    /// Fetches the SlotHashes sysvar data directly via syscall into a provided buffer.
-    ///
-    /// # Arguments
-    /// * `buffer` - A mutable slice to store the sysvar data. Must be at least 8 bytes
-    ///   and the length must be 8 + (N * 40) for some N ≤ 512.
-    /// * `offset` - Byte offset within the sysvar data to start fetching from.
-    ///   Must be 0 (start of data) or 8 + N*40 (start of entry N) for valid alignment.
-    ///   Note: SlotHashes data starts with an 8-byte length prefix followed by entries.
-    ///
-    /// # Returns
-    /// The actual number of entries found in the sysvar data.
-    ///
-    /// For most use cases, prefer `from_account_info()` which provides zero-copy access.
-    #[inline(always)]
-    pub fn fetch_into(buffer: &mut [u8], offset: usize) -> Result<usize, ProgramError> {
-        if buffer.len() != MAX_SIZE {
-            Self::validate_buffer_size(buffer.len())?;
-        }
-
-        Self::validate_fetch_offset(offset, buffer.len())?;
-
-        Self::fetch_into_unchecked(buffer, offset)?;
-
-        let num_entries = read_entry_count_from_bytes(buffer).unwrap_or(0);
-
-        // Reject oversized entry counts to prevent surprises
-        if num_entries > MAX_ENTRIES {
-            return Err(ProgramError::InvalidArgument);
-        }
-
-        let required_len = NUM_ENTRIES_SIZE + num_entries * ENTRY_SIZE;
-        if buffer.len() < required_len {
-            return Err(ProgramError::InvalidArgument);
-        }
-
-        Ok(num_entries)
-    }
-
-    /// Fetches the SlotHashes sysvar data directly via syscall into a provided buffer
-    /// without validation.
-    ///
-    /// This method is for programs that cannot include the sysvar account
-    /// but still need access to the slot hashes data.
-    ///
-    /// # Arguments
-    /// * `buffer` - A mutable slice to store the sysvar data. The buffer length
-    ///   determines how much data is fetched. Use 20,488 bytes for full data
-    ///   on mainnet.
-    /// * `offset` - Byte offset within the sysvar data to start fetching from.
-    ///   Note: SlotHashes data starts with an 8-byte length prefix followed by entries.
-    ///   Must be 0 (start of data) or 8 + N*40 (start of entry N) for valid alignment,
-    ///   but this is not checked.
-    ///
-    /// # Returns
-    /// Nothing - the caller constructs the SlotHashes view afterwards.
-    ///
-    /// For most use cases, prefer `from_account_info()` which provides zero-copy access.
-    #[inline(always)]
-    pub fn fetch_into_unchecked(buffer: &mut [u8], offset: usize) -> Result<(), ProgramError> {
-        // Fetch sysvar data into caller-provided buffer.
-        unsafe {
-            crate::sysvars::get_sysvar_unchecked(
-                buffer.as_mut_ptr(),
-                &SLOTHASHES_ID,
-                offset,
-                buffer.len(),
-            )
-        }?;
-
-        Ok(())
     }
 
     /// Returns the number of `SlotHashEntry` items accessible.
@@ -429,3 +320,7 @@ impl SlotHashes<Box<[u8]>> {
         Ok(unsafe { SlotHashes::new_unchecked(data_init, num_entries) })
     }
 }
+
+pub mod raw;
+#[doc(inline)]
+pub use raw::{fetch_into, fetch_into_unchecked, validate_fetch_offset};
