@@ -49,8 +49,6 @@ const _: [(); 1] = [(); mem::align_of::<SlotHashEntry>()];
 /// SlotHashes provides read-only, zero-copy access to SlotHashes sysvar bytes.
 pub struct SlotHashes<T: Deref<Target = [u8]>> {
     data: T,
-    /// Cached pointer to the first `SlotHashEntry` (offset 8).  Immutable.
-    entries_ptr: *const SlotHashEntry,
     /// Number of entries (decoded from the 8-byte prefix).  Immutable.
     len: usize,
 }
@@ -168,14 +166,7 @@ impl<T: Deref<Target = [u8]>> SlotHashes<T> {
     pub unsafe fn new_unchecked(data: T, len: usize) -> Self {
         debug_assert!(len <= MAX_ENTRIES && data.len() >= NUM_ENTRIES_SIZE + len * ENTRY_SIZE);
 
-        // Pre-compute the pointer to the first entry to avoid repeating the offset
-        let entries_ptr = data.as_ptr().add(NUM_ENTRIES_SIZE) as *const SlotHashEntry;
-
-        SlotHashes {
-            data,
-            entries_ptr,
-            len,
-        }
+        SlotHashes { data, len }
     }
 
     /// Gets the number of entries stored in this SlotHashes instance.
@@ -364,7 +355,12 @@ impl<T: Deref<Target = [u8]>> SlotHashes<T> {
     fn as_entries_slice(&self) -> &[SlotHashEntry] {
         debug_assert!(self.data.len() >= NUM_ENTRIES_SIZE + self.len * ENTRY_SIZE);
 
-        unsafe { from_raw_parts(self.entries_ptr, self.len) }
+        unsafe {
+            from_raw_parts(
+                self.data.as_ptr().add(NUM_ENTRIES_SIZE) as *const SlotHashEntry,
+                self.len,
+            )
+        }
     }
 
     /// Returns a reference to the entry at `index` **without** bounds checking.
