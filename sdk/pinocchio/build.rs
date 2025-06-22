@@ -9,4 +9,4 @@ fn main() {
     if version_meta >= needs {
         println!("cargo:rustc-cfg=has_box_new_uninit_slice");
     }
-} 
+}
