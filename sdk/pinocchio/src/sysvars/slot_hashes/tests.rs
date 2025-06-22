@@ -163,17 +163,8 @@ mod std_tests {
             let header_size = mem::size_of::<FakeAccount>();
             let mut blob: Vec<u8> = std::vec![0u8; header_size + data.len()];
 
-            println!(
-                "DEBUG: header_size = {}, data.len() = {}, blob.len() = {}",
-                header_size,
-                data.len(),
-                blob.len()
-            );
-            println!(
-                "DEBUG: Account size = {}, FakeAccount size = {}",
-                mem::size_of::<Account>(),
-                mem::size_of::<FakeAccount>()
-            );
+            println!("DEBUG: header_size = {}, data.len() = {}, blob.len() = {}", header_size, data.len(), blob.len());
+            println!("DEBUG: Account size = {}, FakeAccount size = {}", mem::size_of::<Account>(), mem::size_of::<FakeAccount>());
 
             let header_ptr = &mut blob[0] as *mut u8 as *mut FakeAccount;
             ptr::write(
@@ -191,10 +182,7 @@ mod std_tests {
                 },
             );
 
-            println!(
-                "DEBUG: After ptr::write, borrow_state = {}",
-                (*header_ptr).borrow_state
-            );
+            println!("DEBUG: After ptr::write, borrow_state = {}", (*header_ptr).borrow_state);
 
             ptr::copy_nonoverlapping(
                 data.as_ptr(),
@@ -215,29 +203,17 @@ mod std_tests {
             let ptr_u8 = aligned_backing.as_mut_ptr() as *mut u8;
             acct_ptr = ptr_u8 as *mut Account;
 
-            println!(
-                "DEBUG: After copy to aligned_backing, borrow_state = {}",
-                (*acct_ptr).borrow_state
-            );
+            println!("DEBUG: After copy to aligned_backing, borrow_state = {}", (*acct_ptr).borrow_state);
             println!("DEBUG: Account pointer = {:p}", acct_ptr);
-            println!(
-                "DEBUG: aligned_backing pointer = {:p}",
-                aligned_backing.as_ptr()
-            );
+            println!("DEBUG: aligned_backing pointer = {:p}", aligned_backing.as_ptr());
         }
 
         let account_info = AccountInfo { raw: acct_ptr };
-
+        
         // Add debug info before the failing call
         unsafe {
-            println!(
-                "DEBUG: About to call from_account_info, borrow_state = {}",
-                (*acct_ptr).borrow_state
-            );
-            println!(
-                "DEBUG: key matches = {}",
-                account_info.key() == &SLOTHASHES_ID
-            );
+            println!("DEBUG: About to call from_account_info, borrow_state = {}", (*acct_ptr).borrow_state);
+            println!("DEBUG: key matches = {}", account_info.key() == &SLOTHASHES_ID);
             println!("DEBUG: data_len = {}", (*acct_ptr).data_len);
         }
 
