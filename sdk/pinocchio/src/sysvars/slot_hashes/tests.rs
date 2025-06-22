@@ -112,7 +112,6 @@ mod std_tests {
     use super::*;
     use std::eprintln;
     use std::io::Write;
-    use std::println;
 
     #[test]
     fn test_iterator_into_ref() {
