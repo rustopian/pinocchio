@@ -301,19 +301,47 @@ impl SlotHashes<Box<[u8]>> {
     /// the full sysvar data (`MAX_SIZE` bytes).
     #[inline(always)]
     pub fn fetch() -> Result<Self, ProgramError> {
-        let mut data = Box::new_uninit_slice(MAX_SIZE);
+        // Allocate buffer for the sysvar fetch. Prefer the zero-init-skip API when
+        // available (Rust ≥1.82) but transparently fall back to a `Vec` for older
+        // compilers so CI can build with Rust 1.79.
 
-        // SAFETY: Buffer length matches requested length.
-        unsafe {
-            crate::sysvars::get_sysvar_unchecked(
-                data.as_mut_ptr() as *mut _ as *mut u8,
-                &SLOTHASHES_ID,
-                0,
-                MAX_SIZE,
-            )
-        }?;
+        #[cfg(has_box_new_uninit_slice)]
+        let data_init: Box<[u8]> = {
+            // SAFETY: The buffer length matches the requested syscall length and we
+            // fully initialise it before use.
+            let mut data = Box::new_uninit_slice(MAX_SIZE);
+            unsafe {
+                crate::sysvars::get_sysvar_unchecked(
+                    data.as_mut_ptr() as *mut u8,
+                    &SLOTHASHES_ID,
+                    0,
+                    MAX_SIZE,
+                )?;
+                data.assume_init()
+            }
+        };
 
-        let data_init = unsafe { data.assume_init() };
+        #[cfg(not(has_box_new_uninit_slice))]
+        let data_init: Box<[u8]> = {
+            let mut vec_buf: std::vec::Vec<u8> = std::vec::Vec::with_capacity(MAX_SIZE);
+            // SAFETY:
+            // 1. `with_capacity` gives us a valid pointer for `MAX_SIZE` bytes.
+            // 2. The syscall writes exactly `MAX_SIZE` bytes starting at that
+            //    pointer, fully initialising the allocation.
+            // 3. We immediately set the length to `MAX_SIZE`, so no
+            //    uninitialised data is observable by safe code.
+            unsafe {
+                crate::sysvars::get_sysvar_unchecked(
+                    vec_buf.as_mut_ptr(),
+                    &SLOTHASHES_ID,
+                    0,
+                    MAX_SIZE,
+                )?;
+                vec_buf.set_len(MAX_SIZE);
+            }
+            vec_buf.into_boxed_slice()
+        };
+
         let num_entries = unsafe { read_entry_count_from_bytes_unchecked(&data_init) };
 
         // SAFETY: The data was initialized by the syscall.
