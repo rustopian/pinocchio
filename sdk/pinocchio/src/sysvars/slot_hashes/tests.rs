@@ -481,7 +481,6 @@ fn test_iterator_into_ref_no_std() {
 #[test]
 fn test_invalid_length_bounds_check() {
     let data = std::vec![0u8; 100];
-    assert!(MAX_ENTRIES + 1 > MAX_ENTRIES);
     assert!(data.len() < NUM_ENTRIES_SIZE + (MAX_ENTRIES + 1) * ENTRY_SIZE);
 }
 
