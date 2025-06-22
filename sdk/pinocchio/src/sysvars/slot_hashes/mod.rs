@@ -325,12 +325,6 @@ impl SlotHashes<Box<[u8]>> {
         #[cfg(not(has_box_new_uninit_slice))]
         let data_init: Box<[u8]> = {
             let mut vec_buf: std::vec::Vec<u8> = std::vec::Vec::with_capacity(MAX_SIZE);
-            // SAFETY:
-            // 1. `with_capacity` gives us a valid pointer for `MAX_SIZE` bytes.
-            // 2. The syscall writes exactly `MAX_SIZE` bytes starting at that
-            //    pointer, fully initialising the allocation.
-            // 3. We immediately set the length to `MAX_SIZE`, so no
-            //    uninitialised data is observable by safe code.
             unsafe {
                 crate::sysvars::get_sysvar_unchecked(
                     vec_buf.as_mut_ptr(),
@@ -338,6 +332,10 @@ impl SlotHashes<Box<[u8]>> {
                     0,
                     MAX_SIZE,
                 )?;
+                // Host syscall is a no-op; zero the first 8 bytes so entry-count = 0
+                #[cfg(not(target_os = "solana"))]
+                core::ptr::write_bytes(vec_buf.as_mut_ptr(), 0, NUM_ENTRIES_SIZE);
+
                 vec_buf.set_len(MAX_SIZE);
             }
             vec_buf.into_boxed_slice()
