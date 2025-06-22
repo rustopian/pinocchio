@@ -8,5 +8,7 @@ fn main() {
 
     if version_meta >= needs {
         println!("cargo:rustc-cfg=has_box_new_uninit_slice");
+        // Inform the `unexpected_cfgs` lint that this cfg is intentional.
+        println!("cargo:rustc-check-cfg=cfg(has_box_new_uninit_slice)");
     }
 }

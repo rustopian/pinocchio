@@ -306,6 +306,7 @@ impl SlotHashes<Box<[u8]>> {
         // compilers so CI can build with Rust 1.79.
 
         #[cfg(has_box_new_uninit_slice)]
+        #[allow(clippy::incompatible_msrv)]
         let data_init: Box<[u8]> = {
             // SAFETY: The buffer length matches the requested syscall length and we
             // fully initialise it before use.
