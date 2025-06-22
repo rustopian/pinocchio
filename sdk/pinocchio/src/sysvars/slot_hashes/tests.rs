@@ -110,6 +110,8 @@ fn generate_mock_entries(
 #[cfg(feature = "std")]
 mod std_tests {
     use super::*;
+    use std::eprintln;
+    use std::io::Write;
     use std::println;
 
     #[test]
@@ -131,15 +133,29 @@ mod std_tests {
 
     #[test]
     fn test_from_account_info_constructor() {
+        eprintln!("DEBUG: Test starting");
+        std::io::stderr().flush().unwrap();
+
         use crate::account_info::{Account, AccountInfo};
         use crate::pubkey::Pubkey;
         use core::{mem, ptr};
 
+        eprintln!("DEBUG: Imports done");
+        std::io::stderr().flush().unwrap();
+
         const NUM_ENTRIES: usize = 3;
         const START_SLOT: u64 = 1234;
+
+        eprintln!("DEBUG: About to generate mock entries");
+        std::io::stderr().flush().unwrap();
         let mock_entries =
             generate_mock_entries(NUM_ENTRIES, START_SLOT, DecrementStrategy::Strictly1);
+        eprintln!("DEBUG: Mock entries generated: {:?}", mock_entries);
+        std::io::stderr().flush().unwrap();
+
         let data = create_mock_data(&mock_entries);
+        eprintln!("DEBUG: Mock data created, length: {}", data.len());
+        std::io::stderr().flush().unwrap();
 
         let mut aligned_backing: Vec<u64>;
         #[allow(unused_assignments)]
@@ -163,13 +179,13 @@ mod std_tests {
             let header_size = mem::size_of::<FakeAccount>();
             let mut blob: Vec<u8> = std::vec![0u8; header_size + data.len()];
 
-            println!(
+            eprintln!(
                 "DEBUG: header_size = {}, data.len() = {}, blob.len() = {}",
                 header_size,
                 data.len(),
                 blob.len()
             );
-            println!(
+            eprintln!(
                 "DEBUG: Account size = {}, FakeAccount size = {}",
                 mem::size_of::<Account>(),
                 mem::size_of::<FakeAccount>()
@@ -191,7 +207,7 @@ mod std_tests {
                 },
             );
 
-            println!(
+            eprintln!(
                 "DEBUG: After ptr::write, borrow_state = {}",
                 (*header_ptr).borrow_state
             );
@@ -215,12 +231,12 @@ mod std_tests {
             let ptr_u8 = aligned_backing.as_mut_ptr() as *mut u8;
             acct_ptr = ptr_u8 as *mut Account;
 
-            println!(
+            eprintln!(
                 "DEBUG: After copy to aligned_backing, borrow_state = {}",
                 (*acct_ptr).borrow_state
             );
-            println!("DEBUG: Account pointer = {:p}", acct_ptr);
-            println!(
+            eprintln!("DEBUG: Account pointer = {:p}", acct_ptr);
+            eprintln!(
                 "DEBUG: aligned_backing pointer = {:p}",
                 aligned_backing.as_ptr()
             );
@@ -230,15 +246,15 @@ mod std_tests {
 
         // Add debug info before the failing call
         unsafe {
-            println!(
+            eprintln!(
                 "DEBUG: About to call from_account_info, borrow_state = {}",
                 (*acct_ptr).borrow_state
             );
-            println!(
+            eprintln!(
                 "DEBUG: key matches = {}",
                 account_info.key() == &SLOTHASHES_ID
             );
-            println!("DEBUG: data_len = {}", (*acct_ptr).data_len);
+            eprintln!("DEBUG: data_len = {}", (*acct_ptr).data_len);
         }
 
         let slot_hashes = SlotHashes::from_account_info(&account_info)
