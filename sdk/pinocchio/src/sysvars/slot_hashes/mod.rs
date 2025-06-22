@@ -318,6 +318,9 @@ impl SlotHashes<Box<[u8]>> {
                     0,
                     MAX_SIZE,
                 )?;
+                // For tests on builds that don't actually fill the buffer.
+                #[cfg(not(target_os = "solana"))]
+                core::ptr::write_bytes(data.as_mut_ptr() as *mut u8, 0, NUM_ENTRIES_SIZE);
                 data.assume_init()
             }
         };
@@ -332,10 +335,8 @@ impl SlotHashes<Box<[u8]>> {
                     0,
                     MAX_SIZE,
                 )?;
-                // Host syscall is a no-op; zero the first 8 bytes so entry-count = 0
                 #[cfg(not(target_os = "solana"))]
                 core::ptr::write_bytes(vec_buf.as_mut_ptr(), 0, NUM_ENTRIES_SIZE);
-
                 vec_buf.set_len(MAX_SIZE);
             }
             vec_buf.into_boxed_slice()
