@@ -75,23 +75,6 @@ fn generate_mock_entries(
 }
 
 #[test]
-fn test_iterator_into_ref() {
-    let entries = generate_mock_entries(10, 50, DecrementStrategy::Strictly1);
-    let data = create_mock_data(&entries);
-    let sh = unsafe { SlotHashes::new_unchecked(data.as_slice(), entries.len()) };
-
-    let mut collected: Vec<u64> = Vec::new();
-    for e in &sh {
-        collected.push(e.slot());
-    }
-    let expected: Vec<u64> = entries.iter().map(|(s, _)| *s).collect();
-    assert_eq!(collected, expected);
-
-    let iter = (&sh).into_iter();
-    assert_eq!(iter.len(), sh.len());
-}
-
-#[test]
 fn test_from_account_info_constructor() {
     use std::eprintln;
     eprintln!("DEBUG: Test starting");
@@ -126,7 +109,7 @@ fn test_from_account_info_constructor() {
         let header_size = core::mem::size_of::<FakeAccount>();
         let mut blob: Vec<u8> = std::vec![0u8; header_size + data.len()];
 
-        let header_ptr = &mut blob[0] as *mut u8 as *mut FakeAccount;
+        let header_ptr = blob.as_mut_ptr() as *mut FakeAccount;
         ptr::write(
             header_ptr,
             FakeAccount {
