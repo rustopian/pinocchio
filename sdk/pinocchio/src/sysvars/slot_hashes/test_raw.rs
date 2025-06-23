@@ -1,4 +1,3 @@
-#![cfg(test)]
 //! Tests focusing on low-level `slot_hashes::raw` helpers.
 
 use super::raw;

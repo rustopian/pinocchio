@@ -1,4 +1,3 @@
-#![cfg(test)]
 //! Tests that rely on the `std` feature (host-only helpers, alloc, etc.).
 
 use super::*;
