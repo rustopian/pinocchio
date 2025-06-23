@@ -381,7 +381,7 @@ impl AccountInfo {
                 );
             }
         }
-      
+
         // SAFETY: The `borrow_state` is a mutable pointer to the borrow state
         // of the account, which is guaranteed to be valid.
         //
