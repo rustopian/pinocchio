@@ -304,51 +304,56 @@ impl<'a> SlotHashes<Ref<'a, [u8]>> {
 
 #[cfg(feature = "std")]
 impl SlotHashes<Box<[u8]>> {
-    /// Fetches the SlotHashes sysvar data directly via syscall. This copies
-    /// the full sysvar data (`MAX_SIZE` bytes).
+    /// Allocates a buffer and fetches SlotHashes sysvar data via syscall.
+    ///
+    /// # Safety
+    /// The caller must ensure the buffer pointer is valid for MAX_SIZE bytes.
+    /// The syscall will write exactly MAX_SIZE bytes to the buffer.
     #[inline(always)]
-    pub fn fetch() -> Result<Self, ProgramError> {
-        // Allocate buffer for the sysvar fetch. Prefer the zero-init-skip API when
-        // available (Rust ≥1.82) but transparently fall back to a `Vec` for older
-        // compilers so CI can build with Rust 1.79.
+    unsafe fn fetch_into_buffer(buffer_ptr: *mut u8) -> Result<(), ProgramError> {
+        crate::sysvars::get_sysvar_unchecked(buffer_ptr, &SLOTHASHES_ID, 0, MAX_SIZE)?;
+
+        // For tests on builds that don't actually fill the buffer.
+        #[cfg(not(target_os = "solana"))]
+        core::ptr::write_bytes(buffer_ptr, 0, NUM_ENTRIES_SIZE);
+
+        Ok(())
+    }
+
+    /// Allocates an optimal buffer for the sysvar data based on available features.
+    #[inline(always)]
+    fn allocate_and_fetch() -> Result<Box<[u8]>, ProgramError> {
+        // Prefer the zero-init-skip API when available (Rust ≥1.82) but
+        // transparently fall back to a `Vec` for older compilers.
 
         #[cfg(has_box_new_uninit_slice)]
         #[allow(clippy::incompatible_msrv)]
-        let data_init: Box<[u8]> = {
+        {
             // SAFETY: The buffer length matches the requested syscall length and we
             // fully initialise it before use.
             let mut data = Box::new_uninit_slice(MAX_SIZE);
             unsafe {
-                crate::sysvars::get_sysvar_unchecked(
-                    data.as_mut_ptr() as *mut u8,
-                    &SLOTHASHES_ID,
-                    0,
-                    MAX_SIZE,
-                )?;
-                // For tests on builds that don't actually fill the buffer.
-                #[cfg(not(target_os = "solana"))]
-                core::ptr::write_bytes(data.as_mut_ptr() as *mut u8, 0, NUM_ENTRIES_SIZE);
-                data.assume_init()
+                Self::fetch_into_buffer(data.as_mut_ptr() as *mut u8)?;
+                Ok(data.assume_init())
             }
-        };
+        }
 
         #[cfg(not(has_box_new_uninit_slice))]
-        let data_init: Box<[u8]> = {
+        {
             let mut vec_buf: std::vec::Vec<u8> = std::vec::Vec::with_capacity(MAX_SIZE);
             unsafe {
-                crate::sysvars::get_sysvar_unchecked(
-                    vec_buf.as_mut_ptr(),
-                    &SLOTHASHES_ID,
-                    0,
-                    MAX_SIZE,
-                )?;
-                #[cfg(not(target_os = "solana"))]
-                core::ptr::write_bytes(vec_buf.as_mut_ptr(), 0, NUM_ENTRIES_SIZE);
+                Self::fetch_into_buffer(vec_buf.as_mut_ptr())?;
                 vec_buf.set_len(MAX_SIZE);
             }
-            vec_buf.into_boxed_slice()
-        };
+            Ok(vec_buf.into_boxed_slice())
+        }
+    }
 
+    /// Fetches the SlotHashes sysvar data directly via syscall. This copies
+    /// the full sysvar data (`MAX_SIZE` bytes).
+    #[inline(always)]
+    pub fn fetch() -> Result<Self, ProgramError> {
+        let data_init = Self::allocate_and_fetch()?;
         let num_entries = unsafe { read_entry_count_from_bytes_unchecked(&data_init) };
 
         // SAFETY: The data was initialized by the syscall.
