@@ -1,6 +1,5 @@
 use crate::{
     program_error::ProgramError,
-    sysvars::slot_hashes::raw,
     sysvars::{clock::Slot, slot_hashes::*},
 };
 use core::mem::{align_of, size_of};
@@ -105,196 +104,6 @@ fn generate_mock_entries(
         current_slot = current_slot.saturating_sub(decrement);
     }
     entries
-}
-
-#[cfg(feature = "std")]
-mod std_tests {
-    use super::*;
-    use std::eprintln;
-    use std::io::Write;
-
-    #[test]
-    fn test_iterator_into_ref() {
-        let entries = generate_mock_entries(10, 50, DecrementStrategy::Strictly1);
-        let data = create_mock_data(&entries);
-        let sh = unsafe { SlotHashes::new_unchecked(data.as_slice(), entries.len()) };
-
-        let mut collected: Vec<u64> = Vec::new();
-        for e in &sh {
-            collected.push(e.slot());
-        }
-        let expected: Vec<u64> = entries.iter().map(|(s, _)| *s).collect();
-        assert_eq!(collected, expected);
-
-        let iter = (&sh).into_iter();
-        assert_eq!(iter.len(), sh.len());
-    }
-
-    #[test]
-    fn test_from_account_info_constructor() {
-        eprintln!("DEBUG: Test starting");
-        std::io::stderr().flush().unwrap();
-
-        use crate::account_info::{Account, AccountInfo};
-        use crate::pubkey::Pubkey;
-        use core::{mem, ptr};
-
-        eprintln!("DEBUG: Imports done");
-        std::io::stderr().flush().unwrap();
-
-        const NUM_ENTRIES: usize = 3;
-        const START_SLOT: u64 = 1234;
-
-        eprintln!("DEBUG: About to generate mock entries");
-        std::io::stderr().flush().unwrap();
-        let mock_entries =
-            generate_mock_entries(NUM_ENTRIES, START_SLOT, DecrementStrategy::Strictly1);
-        eprintln!("DEBUG: Mock entries generated: {:?}", mock_entries);
-        std::io::stderr().flush().unwrap();
-
-        let data = create_mock_data(&mock_entries);
-        eprintln!("DEBUG: Mock data created, length: {}", data.len());
-        std::io::stderr().flush().unwrap();
-
-        let mut aligned_backing: Vec<u64>;
-        #[allow(unused_assignments)]
-        let mut acct_ptr: *mut Account = core::ptr::null_mut();
-
-        #[repr(C)]
-        #[derive(Clone, Copy, Default)]
-        struct FakeAccount {
-            borrow_state: u8,
-            is_signer: u8,
-            is_writable: u8,
-            executable: u8,
-            resize_delta: i32,
-            key: Pubkey,
-            owner: Pubkey,
-            lamports: u64,
-            data_len: u64,
-        }
-
-        unsafe {
-            // Build a contiguous Vec<u8> with header followed by SlotHashes payload.
-            let header_size = mem::size_of::<FakeAccount>();
-            let mut blob: Vec<u8> = std::vec![0u8; header_size + data.len()];
-
-            eprintln!(
-                "DEBUG: header_size = {}, data.len() = {}, blob.len() = {}",
-                header_size,
-                data.len(),
-                blob.len()
-            );
-            eprintln!(
-                "DEBUG: Account size = {}, FakeAccount size = {}",
-                mem::size_of::<Account>(),
-                mem::size_of::<FakeAccount>()
-            );
-
-            let header_ptr = &mut blob[0] as *mut u8 as *mut FakeAccount;
-            ptr::write(
-                header_ptr,
-                FakeAccount {
-                    borrow_state: crate::NON_DUP_MARKER,
-                    is_signer: 0,
-                    is_writable: 0,
-                    executable: 0,
-                    resize_delta: 0,
-                    key: SLOTHASHES_ID,
-                    owner: [0u8; 32],
-                    lamports: 0,
-                    data_len: data.len() as u64,
-                },
-            );
-
-            eprintln!(
-                "DEBUG: After ptr::write, borrow_state = {}",
-                (*header_ptr).borrow_state
-            );
-
-            ptr::copy_nonoverlapping(
-                data.as_ptr(),
-                blob.as_mut_ptr().add(header_size),
-                data.len(),
-            );
-
-            let word_len = (blob.len() + 7) / 8;
-            aligned_backing = std::vec![0u64; word_len];
-            ptr::copy_nonoverlapping(
-                blob.as_ptr(),
-                aligned_backing.as_mut_ptr() as *mut u8,
-                blob.len(),
-            );
-
-            // Purposely shadow the earlier variables so the remainder of the test
-            // works unchanged.
-            let ptr_u8 = aligned_backing.as_mut_ptr() as *mut u8;
-            acct_ptr = ptr_u8 as *mut Account;
-
-            eprintln!(
-                "DEBUG: After copy to aligned_backing, borrow_state = {}",
-                (*acct_ptr).borrow_state
-            );
-            eprintln!("DEBUG: Account pointer = {:p}", acct_ptr);
-            eprintln!(
-                "DEBUG: aligned_backing pointer = {:p}",
-                aligned_backing.as_ptr()
-            );
-        }
-
-        let account_info = AccountInfo { raw: acct_ptr };
-
-        // Add debug info before the failing call
-        unsafe {
-            eprintln!(
-                "DEBUG: About to call from_account_info, borrow_state = {}",
-                (*acct_ptr).borrow_state
-            );
-            eprintln!(
-                "DEBUG: key matches = {}",
-                account_info.key() == &SLOTHASHES_ID
-            );
-            eprintln!("DEBUG: data_len = {}", (*acct_ptr).data_len);
-        }
-
-        let slot_hashes = SlotHashes::from_account_info(&account_info)
-            .expect("from_account_info should succeed with well-formed data");
-
-        // Basic sanity checks on the returned view.
-        assert_eq!(slot_hashes.len(), NUM_ENTRIES);
-        for (i, entry) in slot_hashes.into_iter().enumerate() {
-            assert_eq!(entry.slot(), mock_entries[i].0);
-            assert_eq!(entry.hash, mock_entries[i].1);
-        }
-    }
-
-    #[test]
-    fn test_fetch_std_path() {
-        // Mock SlotHashes data (5 entries) that we expect to observe after a
-        // successful syscall on-chain.
-        const START_SLOT: u64 = 500;
-        let entries = generate_mock_entries(5, START_SLOT, DecrementStrategy::Strictly1);
-        let data = create_mock_data(&entries);
-
-        // Call the real fetch() implementation first. This ensures we run
-        // through all internal logic (allocation, length checks, etc.). On
-        // the host, the underlying syscall is a no-op so the returned
-        // buffer is zero-initialised.
-        let mut slot_hashes =
-            SlotHashes::<Box<[u8]>>::fetch().expect("fetch() should succeed on host");
-
-        // Back-fill the buffer with the mock payload so that all accessors
-        // operate on realistic data.
-        slot_hashes.data[..data.len()].copy_from_slice(&data);
-        // Recompute the entry count now that the header is populated.
-        slot_hashes.len = unsafe { read_entry_count_from_bytes_unchecked(&slot_hashes.data) };
-
-        assert_eq!(slot_hashes.len(), entries.len());
-        for (i, entry) in slot_hashes.into_iter().enumerate() {
-            assert_eq!(entry.slot(), entries[i].0);
-            assert_eq!(entry.hash, entries[i].1);
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -535,20 +344,6 @@ fn test_iterator_into_ref_no_std() {
     assert_eq!(iter.len(), sh.len());
 }
 
-// CI doesn't like a should_panic test here; mimics debug_assert in code for now
-#[test]
-fn test_invalid_length_bounds_check() {
-    let data = std::vec![0u8; 100];
-    assert!(data.len() < NUM_ENTRIES_SIZE + (MAX_ENTRIES + 1) * ENTRY_SIZE);
-}
-
-// CI doesn't like a should_panic test here; mimics debug_assert in code for now
-#[test]
-fn test_insufficient_data_bounds_check() {
-    let data = std::vec![0u8; NUM_ENTRIES_SIZE + 10];
-    assert!(data.len() < NUM_ENTRIES_SIZE + 2 * ENTRY_SIZE);
-}
-
 // Tests to verify mock data helpers
 #[test]
 fn mock_data_max_entries_boundary() {
@@ -592,31 +387,6 @@ fn test_read_entry_count_from_bytes() {
 
     let max_result = read_entry_count_from_bytes(&max_data);
     assert_eq!(max_result, Some(MAX_ENTRIES));
-}
-
-#[test]
-fn test_validate_buffer_size() {
-    let small_len = 4;
-    assert!(raw::validate_buffer_size(small_len).is_err());
-
-    let misaligned_len = NUM_ENTRIES_SIZE + 39;
-    assert!(raw::validate_buffer_size(misaligned_len).is_err());
-
-    let oversized_len = NUM_ENTRIES_SIZE + (MAX_ENTRIES + 1) * ENTRY_SIZE;
-    assert!(raw::validate_buffer_size(oversized_len).is_err());
-
-    let valid_empty_len = NUM_ENTRIES_SIZE;
-    assert!(raw::validate_buffer_size(valid_empty_len).is_ok());
-
-    let valid_one_len = NUM_ENTRIES_SIZE + ENTRY_SIZE;
-    assert!(raw::validate_buffer_size(valid_one_len).is_ok());
-
-    let valid_max_len = NUM_ENTRIES_SIZE + MAX_ENTRIES * ENTRY_SIZE;
-    assert!(raw::validate_buffer_size(valid_max_len).is_ok());
-
-    // Edge case: exactly at the boundary
-    let boundary_len = NUM_ENTRIES_SIZE + MAX_ENTRIES * ENTRY_SIZE;
-    assert!(raw::validate_buffer_size(boundary_len).is_ok());
 }
 
 fn mock_fetch_into_unchecked(
@@ -721,166 +491,18 @@ fn test_entries_exposed_no_std() {
 }
 
 #[test]
-fn test_fetch_into_offset_validation() {
-    let buffer_len = 200;
+fn test_safe_vs_unsafe_getters_consistency() {
+    let entries = generate_mock_entries(16, 200, DecrementStrategy::Strictly1);
+    let data = create_mock_data(&entries);
+    let sh = unsafe { SlotHashes::new_unchecked(data.as_slice(), entries.len()) };
 
-    // Offset 0 (start of data) - should pass validation
-    assert!(validate_fetch_offset(0, buffer_len).is_ok());
-
-    // Offset 8 (start of first entry) - should pass validation
-    assert!(validate_fetch_offset(8, buffer_len).is_ok());
-
-    // Offset 48 (start of second entry) - should pass validation
-    assert!(validate_fetch_offset(48, buffer_len).is_ok());
-
-    // Offset 88 (start of third entry) - should pass validation
-    assert!(validate_fetch_offset(88, buffer_len).is_ok());
-
-    // Invalid offsets that should fail validation
-
-    // Offset beyond MAX_SIZE
-    assert!(validate_fetch_offset(MAX_SIZE, buffer_len).is_err());
-
-    // Offset pointing mid-entry (not aligned)
-    assert!(validate_fetch_offset(12, buffer_len).is_err()); // 8 + 4, mid-entry
-    assert!(validate_fetch_offset(20, buffer_len).is_err()); // 8 + 12, mid-entry
-    assert!(validate_fetch_offset(35, buffer_len).is_err()); // 8 + 27, mid-entry
-
-    // Offset in header but not at start
-    assert!(validate_fetch_offset(4, buffer_len).is_err()); // Mid-header
-    assert!(validate_fetch_offset(7, buffer_len).is_err()); // End of header
-
-    // Test buffer + offset exceeding MAX_SIZE
-    assert!(validate_fetch_offset(1, MAX_SIZE).is_err());
-    assert!(validate_fetch_offset(MAX_SIZE - 100, 200).is_err());
-
-    // Last entry
-    assert!(validate_fetch_offset(8 + 511 * ENTRY_SIZE, 40).is_ok());
-
-    // One past last valid entry
-    assert!(validate_fetch_offset(8 + 512 * ENTRY_SIZE, 40).is_err());
-}
-
-#[cfg(test)]
-mod edge_tests {
-    extern crate std;
-    use crate::{
-        account_info::{Account, AccountInfo},
-        program_error::ProgramError,
-        pubkey::Pubkey,
-        sysvars::slot_hashes::*,
-    };
-    use core::{mem, ptr};
-    use std::vec::Vec;
-
-    fn raw_slot_hashes(declared_len: u64, entries: &[(u64, [u8; HASH_BYTES])]) -> Vec<u8> {
-        let mut v = Vec::with_capacity(NUM_ENTRIES_SIZE + entries.len() * ENTRY_SIZE);
-        v.extend_from_slice(&declared_len.to_le_bytes());
-        for (slot, hash) in entries {
-            v.extend_from_slice(&slot.to_le_bytes());
-            v.extend_from_slice(hash);
-        }
-        v
+    for i in 0..entries.len() {
+        let safe_entry = sh.get_entry(i).unwrap();
+        let unsafe_entry = unsafe { sh.get_entry_unchecked(i) };
+        assert_eq!(safe_entry, unsafe_entry);
     }
 
-    struct AccountInfoWithBacking {
-        info: AccountInfo,
-        _backing: std::vec::Vec<u64>,
-    }
-
-    unsafe fn account_info_with(key: Pubkey, data: &[u8]) -> AccountInfoWithBacking {
-        #[repr(C)]
-        #[derive(Clone, Copy, Default)]
-        struct Header {
-            borrow_state: u8,
-            is_signer: u8,
-            is_writable: u8,
-            executable: u8,
-            resize_delta: i32,
-            key: Pubkey,
-            owner: Pubkey,
-            lamports: u64,
-            data_len: u64,
-        }
-        let hdr_len = mem::size_of::<Header>();
-        let total = hdr_len + data.len();
-        let words = (total + 7) / 8;
-        let mut backing: std::vec::Vec<u64> = std::vec![0u64; words];
-        let hdr_ptr = backing.as_mut_ptr() as *mut Header;
-        ptr::write(
-            hdr_ptr,
-            Header {
-                borrow_state: crate::NON_DUP_MARKER,
-                is_signer: 0,
-                is_writable: 0,
-                executable: 0,
-                resize_delta: 0,
-                key,
-                owner: [0u8; 32],
-                lamports: 0,
-                data_len: data.len() as u64,
-            },
-        );
-        ptr::copy_nonoverlapping(data.as_ptr(), (hdr_ptr as *mut u8).add(hdr_len), data.len());
-        AccountInfoWithBacking {
-            info: AccountInfo {
-                raw: hdr_ptr as *mut Account,
-            },
-            _backing: backing,
-        }
-    }
-
-    #[test]
-    fn wrong_key_from_account_info() {
-        let bytes = raw_slot_hashes(0, &[]);
-        let acct_with = unsafe { account_info_with([1u8; 32], &bytes) };
-        assert!(matches!(
-            SlotHashes::from_account_info(&acct_with.info),
-            Err(ProgramError::InvalidArgument)
-        ));
-    }
-
-    #[test]
-    fn too_many_entries_rejected() {
-        let bytes = raw_slot_hashes((MAX_ENTRIES as u64) + 1, &[]);
-        assert!(matches!(
-            SlotHashes::new(bytes.as_slice()),
-            Err(ProgramError::InvalidArgument)
-        ));
-    }
-
-    #[test]
-    fn truncated_payload_rejected() {
-        let entry = (123u64, [7u8; HASH_BYTES]);
-        let bytes = raw_slot_hashes(2, &[entry]); // says 2 but provides 1
-        assert!(matches!(
-            SlotHashes::new(bytes.as_slice()),
-            Err(ProgramError::InvalidArgument)
-        ));
-    }
-
-    #[test]
-    fn duplicate_slots_binary_search_safe() {
-        let entries = &[
-            (200, [0u8; HASH_BYTES]),
-            (200, [1u8; HASH_BYTES]),
-            (199, [2u8; HASH_BYTES]),
-        ];
-        let bytes = raw_slot_hashes(entries.len() as u64, entries);
-        let sh = unsafe { SlotHashes::new_unchecked(&bytes[..], entries.len()) };
-        let dup_pos = sh.position(200).expect("slot 200 must exist");
-        assert!(
-            dup_pos <= 1,
-            "binary_search should return one of the duplicate indices (0 or 1)"
-        );
-        assert_eq!(sh.get_hash(199), Some(&entries[2].1));
-    }
-
-    #[test]
-    fn zero_len_minimal_slice_iterates_empty() {
-        let zero_bytes = 0u64.to_le_bytes();
-        let sh = unsafe { SlotHashes::new_unchecked(&zero_bytes[..], 0) };
-        assert_eq!(sh.len(), 0);
-        assert!(sh.into_iter().next().is_none());
-    }
+    let safe_count = sh.get_entry_count().unwrap();
+    let unsafe_count = unsafe { sh.get_entry_count_unchecked() };
+    assert_eq!(safe_count, unsafe_count);
 }

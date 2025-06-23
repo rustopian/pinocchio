@@ -1,7 +1,13 @@
 //! Efficient, zero-copy access to SlotHashes sysvar data.
 
 #[cfg(test)]
-mod tests;
+mod test;
+#[cfg(test)]
+mod test_edge;
+#[cfg(test)]
+mod test_raw;
+#[cfg(test)]
+mod test_std;
 
 use crate::{
     account_info::{AccountInfo, Ref},
