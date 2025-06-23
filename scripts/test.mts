@@ -8,8 +8,7 @@ import {
 
 const [folder, ...args] = cliArguments();
 
-const testArgs = ['--all-features', ...args, '--', '--nocapture'];
-process.env.RUST_BACKTRACE = '1';
+const testArgs = ['--all-features', ...args];
 const toolchain = getToolchainArgument('test');
 
 const manifestPath = path.join(workingDirectory, folder, 'Cargo.toml');
