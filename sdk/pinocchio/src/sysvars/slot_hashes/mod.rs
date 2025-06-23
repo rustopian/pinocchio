@@ -285,7 +285,24 @@ impl<'a> SlotHashes<Ref<'a, [u8]>> {
             return Err(ProgramError::InvalidArgument);
         }
 
+        #[cfg(feature = "std")]
+        {
+            use std::eprintln;
+            unsafe {
+                eprintln!("DEBUG: Inside from_account_info, about to call try_borrow_data, borrow_state = {}", (*account_info.raw).borrow_state);
+            }
+        }
+
         let data_ref = account_info.try_borrow_data()?;
+
+        #[cfg(feature = "std")]
+        {
+            use std::eprintln;
+            eprintln!(
+                "DEBUG: Successfully borrowed data, length = {}",
+                data_ref.len()
+            );
+        }
         // Since the account key matches SLOTHASHES_ID, we can trust the runtime
         // to have provided valid sysvar data
         let num_entries = unsafe { read_entry_count_from_bytes_unchecked(&data_ref) };
