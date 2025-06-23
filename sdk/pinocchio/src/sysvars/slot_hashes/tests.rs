@@ -161,12 +161,13 @@ mod std_tests {
         let mut acct_ptr: *mut Account = core::ptr::null_mut();
 
         #[repr(C)]
+        #[derive(Clone, Copy, Default)]
         struct FakeAccount {
             borrow_state: u8,
             is_signer: u8,
             is_writable: u8,
             executable: u8,
-            original_data_len: u32,
+            resize_delta: i32,
             key: Pubkey,
             owner: Pubkey,
             lamports: u64,
@@ -194,11 +195,11 @@ mod std_tests {
             ptr::write(
                 header_ptr,
                 FakeAccount {
-                    borrow_state: 0,
+                    borrow_state: crate::NON_DUP_MARKER,
                     is_signer: 0,
                     is_writable: 0,
                     executable: 0,
-                    original_data_len: 0,
+                    resize_delta: 0,
                     key: SLOTHASHES_ID,
                     owner: [0u8; 32],
                     lamports: 0,
@@ -789,12 +790,13 @@ mod edge_tests {
 
     unsafe fn account_info_with(key: Pubkey, data: &[u8]) -> AccountInfoWithBacking {
         #[repr(C)]
+        #[derive(Clone, Copy, Default)]
         struct Header {
             borrow_state: u8,
             is_signer: u8,
             is_writable: u8,
             executable: u8,
-            original_data_len: u32,
+            resize_delta: i32,
             key: Pubkey,
             owner: Pubkey,
             lamports: u64,
@@ -808,11 +810,11 @@ mod edge_tests {
         ptr::write(
             hdr_ptr,
             Header {
-                borrow_state: 0,
+                borrow_state: crate::NON_DUP_MARKER,
                 is_signer: 0,
                 is_writable: 0,
                 executable: 0,
-                original_data_len: 0,
+                resize_delta: 0,
                 key,
                 owner: [0u8; 32],
                 lamports: 0,

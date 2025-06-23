@@ -388,7 +388,7 @@ impl AccountInfo {
         // "consumes" one immutable borrow for data; we are guaranteed
         // that there is at least one immutable borrow available
         let borrow_state = unsafe { &mut (*self.raw).borrow_state };
-        *borrow_state += 1;
+        *borrow_state -= 1;
 
         // return the reference to data
         Ok(Ref {
@@ -447,7 +447,7 @@ impl AccountInfo {
 
         // check if mutable data borrow is already taken (most significant bit
         // of the data_borrow_state)
-        if borrow_state & 0b_0000_1000 != 0 {
+        if borrow_state & 0b_0000_1000 != 0b_0000_1000 {
             #[cfg(feature = "std")]
             {
                 use std::eprintln;
@@ -460,7 +460,7 @@ impl AccountInfo {
         }
 
         // check if we have reached the max immutable data borrow count (7)
-        if borrow_state & 0b_0111 == 0b0111 {
+        if borrow_state & 0b_0111 == 0 {
             #[cfg(feature = "std")]
             {
                 use std::eprintln;
