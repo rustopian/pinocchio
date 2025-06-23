@@ -105,11 +105,13 @@ fn test_from_account_info_constructor() {
     }
 
     unsafe {
-        // Build a contiguous Vec<u8> with header followed by SlotHashes payload.
         let header_size = core::mem::size_of::<FakeAccount>();
-        let mut blob: Vec<u8> = std::vec![0u8; header_size + data.len()];
+        let total_size = header_size + data.len();
+        let word_len = (total_size + 7) / 8;
+        aligned_backing = std::vec![0u64; word_len];
+        let base_ptr = aligned_backing.as_mut_ptr() as *mut u8;
 
-        let header_ptr = blob.as_mut_ptr() as *mut FakeAccount;
+        let header_ptr = base_ptr as *mut FakeAccount;
         ptr::write(
             header_ptr,
             FakeAccount {
@@ -125,22 +127,9 @@ fn test_from_account_info_constructor() {
             },
         );
 
-        ptr::copy_nonoverlapping(
-            data.as_ptr(),
-            blob.as_mut_ptr().add(header_size),
-            data.len(),
-        );
+        ptr::copy_nonoverlapping(data.as_ptr(), base_ptr.add(header_size), data.len());
 
-        let word_len = (blob.len() + 7) / 8;
-        aligned_backing = std::vec![0u64; word_len];
-        ptr::copy_nonoverlapping(
-            blob.as_ptr(),
-            aligned_backing.as_mut_ptr() as *mut u8,
-            blob.len(),
-        );
-
-        let ptr_u8 = aligned_backing.as_mut_ptr() as *mut u8;
-        acct_ptr = ptr_u8 as *mut Account;
+        acct_ptr = base_ptr as *mut Account;
     }
 
     let account_info = AccountInfo { raw: acct_ptr };
