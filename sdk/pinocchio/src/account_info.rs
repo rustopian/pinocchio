@@ -357,38 +357,16 @@ impl AccountInfo {
     /// Tries to get a read-only reference to the data field, failing if the field
     /// is already mutable borrowed or if `7` borrows already exist.
     pub fn try_borrow_data(&self) -> Result<Ref<[u8]>, ProgramError> {
-        #[cfg(feature = "std")]
-        {
-            use std::eprintln;
-            unsafe {
-                eprintln!(
-                    "DEBUG: try_borrow_data called, borrow_state = {}",
-                    (*self.raw).borrow_state
-                );
-            }
-        }
-
         // check if the account data is already borrowed
         self.can_borrow_data()?;
 
-        #[cfg(feature = "std")]
-        {
-            use std::eprintln;
-            unsafe {
-                eprintln!(
-                    "DEBUG: can_borrow_data passed, borrow_state = {}",
-                    (*self.raw).borrow_state
-                );
-            }
-        }
-
+        let borrow_state = self.raw as *mut u8;
         // SAFETY: The `borrow_state` is a mutable pointer to the borrow state
         // of the account, which is guaranteed to be valid.
         //
         // "consumes" one immutable borrow for data; we are guaranteed
         // that there is at least one immutable borrow available
-        let borrow_state = unsafe { &mut (*self.raw).borrow_state };
-        *borrow_state -= 1;
+        unsafe { *borrow_state -= 1 };
 
         // return the reference to data
         Ok(Ref {
@@ -436,46 +414,15 @@ impl AccountInfo {
     pub fn can_borrow_data(&self) -> Result<(), ProgramError> {
         let borrow_state = unsafe { (*self.raw).borrow_state };
 
-        #[cfg(feature = "std")]
-        {
-            use std::eprintln;
-            eprintln!(
-                "DEBUG: can_borrow_data checking, borrow_state = {:#010b} ({})",
-                borrow_state, borrow_state
-            );
-        }
-
         // check if mutable data borrow is already taken (most significant bit
-        // of the data_borrow_state)
-        if borrow_state & 0b_0000_1000 != 0b_0000_1000 {
-            #[cfg(feature = "std")]
-            {
-                use std::eprintln;
-                eprintln!(
-                    "DEBUG: Mutable data borrow already taken! borrow_state & 0b_0000_1000 = {}",
-                    borrow_state & 0b_0000_1000
-                );
-            }
+        // of the data borrow state)
+        if borrow_state & 0b_0000_1000 == 0 {
             return Err(ProgramError::AccountBorrowFailed);
         }
 
         // check if we have reached the max immutable data borrow count (7)
-        if borrow_state & 0b_0111 == 0 {
-            #[cfg(feature = "std")]
-            {
-                use std::eprintln;
-                eprintln!(
-                    "DEBUG: Max immutable borrow count reached! borrow_state & 0b_0111 = {}",
-                    borrow_state & 0b_0111
-                );
-            }
+        if borrow_state & 0b_0000_0111 == 0 {
             return Err(ProgramError::AccountBorrowFailed);
-        }
-
-        #[cfg(feature = "std")]
-        {
-            use std::eprintln;
-            eprintln!("DEBUG: can_borrow_data passed all checks");
         }
 
         Ok(())
