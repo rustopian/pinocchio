@@ -2,8 +2,6 @@
 //! This module is compiled only when `cfg(test)` is active so `std` can be used
 //! freely while production code remains `#![no_std]`.
 
-#![cfg(test)]
-
 use super::*;
 extern crate std;
 use core::{mem, ptr};
