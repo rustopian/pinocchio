@@ -40,6 +40,13 @@ pub const MAX_ENTRIES: usize = 512;
 /// Max size of the sysvar data in bytes. 20488. Golden on mainnet (never smaller)
 pub const MAX_SIZE: usize = NUM_ENTRIES_SIZE + MAX_ENTRIES * ENTRY_SIZE;
 
+/// `data.len() != MAX_SIZE`
+pub const ERR_DATA_LEN_MISMATCH: u32 = 0x01;
+/// Declared entry-count > 512
+pub const ERR_ENTRYCOUNT_OVERFLOW: u32 = 0x02;
+/// Account supplied to `from_account_info` is not the SlotHashes sysvar.
+pub const ERR_WRONG_ACCOUNT_KEY: u32 = 0x03;
+
 /// A single entry in the `SlotHashes` sysvar.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 #[repr(C)]
@@ -64,7 +71,12 @@ pub(crate) fn read_entry_count_from_bytes(data: &[u8]) -> Option<usize> {
     if data.len() < NUM_ENTRIES_SIZE {
         return None;
     }
-    Some(unsafe { u64::from_le_bytes(*(data.as_ptr() as *const [u8; NUM_ENTRIES_SIZE])) } as usize)
+    Some(unsafe {
+        // SAFETY: `data` is guaranteed to be at least `NUM_ENTRIES_SIZE` bytes long by the
+        // preceding length check, so it is sound to read the first 8 bytes and interpret
+        // them as a little-endian `u64`.
+        u64::from_le_bytes(*(data.as_ptr() as *const [u8; NUM_ENTRIES_SIZE]))
+    } as usize)
 }
 
 /// Reads the entry count from the first 8 bytes of data.
@@ -77,11 +89,18 @@ pub(crate) unsafe fn read_entry_count_from_bytes_unchecked(data: &[u8]) -> usize
 }
 
 /// Validates SlotHashes data format assuming golden mainnet length and returns the entry count.
+///
+/// The function checks:
+/// 1. The buffer length is exactly `MAX_SIZE` bytes.
+/// 2. The declared entry count is ≤ `MAX_ENTRIES`.
+///
+/// It returns `Ok(())` if the data is well-formed, otherwise an appropriate
+/// `ProgramError` describing the issue.
 #[inline]
 fn parse_and_validate_data(data: &[u8]) -> Result<(), ProgramError> {
     // Must be exactly the golden mainnet size
     if data.len() != MAX_SIZE {
-        return Err(ProgramError::InvalidArgument);
+        return Err(ProgramError::Custom(ERR_DATA_LEN_MISMATCH));
     }
 
     // Read and validate the entry count from the header
@@ -89,7 +108,7 @@ fn parse_and_validate_data(data: &[u8]) -> Result<(), ProgramError> {
 
     // num_entries < 512 is allowed, for contexts which padded data up to size
     if num_entries > MAX_ENTRIES {
-        return Err(ProgramError::InvalidArgument);
+        return Err(ProgramError::Custom(ERR_ENTRYCOUNT_OVERFLOW));
     }
     Ok(())
 }
@@ -112,6 +131,10 @@ impl<T: Deref<Target = [u8]>> SlotHashes<T> {
     #[inline(always)]
     pub fn new(data: T) -> Result<Self, ProgramError> {
         parse_and_validate_data(&data)?;
+        // SAFETY: `parse_and_validate_data` verifies that the data slice is exactly
+        // `MAX_SIZE` bytes long and that the declared entry count is within
+        // `MAX_ENTRIES`, thus upholding all invariants required by
+        // `SlotHashes::new_unchecked`.
         Ok(unsafe { Self::new_unchecked(data) })
     }
 
@@ -139,6 +162,9 @@ impl<T: Deref<Target = [u8]>> SlotHashes<T> {
     /// Returns the number of `SlotHashEntry` items accessible.
     #[inline(always)]
     pub fn len(&self) -> usize {
+        // SAFETY: `SlotHashes::new` and `new_unchecked` guarantee that `self.data` has at
+        // least `NUM_ENTRIES_SIZE` bytes, so reading the entry count without additional
+        // checks is safe.
         unsafe { read_entry_count_from_bytes_unchecked(&self.data) }
     }
 
@@ -198,6 +224,12 @@ impl<T: Deref<Target = [u8]>> SlotHashes<T> {
         debug_assert!(self.data.len() >= NUM_ENTRIES_SIZE + len * ENTRY_SIZE);
 
         unsafe {
+            // SAFETY: The slice begins `NUM_ENTRIES_SIZE` bytes into `self.data`, which
+            // is guaranteed to have at least `len * ENTRY_SIZE` additional bytes (see
+            // debug_assert! above). The pointer is properly aligned for
+            // `SlotHashEntry` because the struct is `repr(C)` and the original slice
+            // is aligned to at least u64. Therefore the constructed slice is valid
+            // for `len` elements for the lifetime of `&self`.
             from_raw_parts(
                 self.data.as_ptr().add(NUM_ENTRIES_SIZE) as *const SlotHashEntry,
                 len,
@@ -233,7 +265,7 @@ impl<'a> SlotHashes<Ref<'a, [u8]>> {
     #[inline(always)]
     pub fn from_account_info(account_info: &'a AccountInfo) -> Result<Self, ProgramError> {
         if account_info.key() != &SLOTHASHES_ID {
-            return Err(ProgramError::InvalidArgument);
+            return Err(ProgramError::Custom(ERR_WRONG_ACCOUNT_KEY));
         }
 
         let data_ref = account_info.try_borrow_data()?;
@@ -283,6 +315,11 @@ impl SlotHashes<Box<[u8]>> {
         {
             let mut vec_buf: std::vec::Vec<u8> = std::vec::Vec::with_capacity(MAX_SIZE);
             unsafe {
+                // SAFETY: `vec_buf` was allocated with capacity `MAX_SIZE` so its
+                // pointer is valid for exactly that many bytes. `fetch_into_buffer`
+                // writes `MAX_SIZE` bytes, and we immediately set the length to
+                // `MAX_SIZE`, marking the entire buffer as initialised before it is
+                // turned into a boxed slice.
                 Self::fetch_into_buffer(vec_buf.as_mut_ptr())?;
                 vec_buf.set_len(MAX_SIZE);
             }
