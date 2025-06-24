@@ -1,6 +1,4 @@
 use crate::{program_error::ProgramError, sysvars::slot_hashes::*};
-// (mem, ptr) no longer needed after helper refactor
-// use core::{mem, ptr};
 extern crate std;
 use super::test_utils::{build_slot_hashes_bytes as raw_slot_hashes, make_account_info};
 
