@@ -1,124 +1,15 @@
-use crate::{
-    account_info::{Account, AccountInfo},
-    program_error::ProgramError,
-    pubkey::Pubkey,
-    sysvars::slot_hashes::*,
-};
-use core::{mem, ptr};
+use crate::{program_error::ProgramError, sysvars::slot_hashes::*};
+// (mem, ptr) no longer needed after helper refactor
+// use core::{mem, ptr};
 extern crate std;
-use std::vec::Vec;
-
-fn raw_slot_hashes(declared_len: u64, entries: &[(u64, [u8; HASH_BYTES])]) -> Vec<u8> {
-    let mut v = std::vec![0u8; MAX_SIZE];
-    v[..NUM_ENTRIES_SIZE].copy_from_slice(&declared_len.to_le_bytes());
-    let mut offset = NUM_ENTRIES_SIZE;
-    for (slot, hash) in entries {
-        v[offset..offset + SLOT_SIZE].copy_from_slice(&slot.to_le_bytes());
-        v[offset + SLOT_SIZE..offset + ENTRY_SIZE].copy_from_slice(hash);
-        offset += ENTRY_SIZE;
-    }
-    v
-}
-
-struct AccountInfoWithBacking {
-    info: AccountInfo,
-    _backing: std::vec::Vec<u64>,
-}
-
-unsafe fn account_info_with(key: Pubkey, data: &[u8]) -> AccountInfoWithBacking {
-    #[repr(C)]
-    #[derive(Clone, Copy, Default)]
-    struct Header {
-        borrow_state: u8,
-        is_signer: u8,
-        is_writable: u8,
-        executable: u8,
-        resize_delta: i32,
-        key: Pubkey,
-        owner: Pubkey,
-        lamports: u64,
-        data_len: u64,
-    }
-    let hdr_len = mem::size_of::<Header>();
-    let total = hdr_len + data.len();
-    let words = (total + 7) / 8;
-    let mut backing: std::vec::Vec<u64> = std::vec![0u64; words];
-    let hdr_ptr = backing.as_mut_ptr() as *mut Header;
-    ptr::write(
-        hdr_ptr,
-        Header {
-            borrow_state: crate::NON_DUP_MARKER,
-            is_signer: 0,
-            is_writable: 0,
-            executable: 0,
-            resize_delta: 0,
-            key,
-            owner: [0u8; 32],
-            lamports: 0,
-            data_len: data.len() as u64,
-        },
-    );
-    ptr::copy_nonoverlapping(data.as_ptr(), (hdr_ptr as *mut u8).add(hdr_len), data.len());
-    AccountInfoWithBacking {
-        info: AccountInfo {
-            raw: hdr_ptr as *mut Account,
-        },
-        _backing: backing,
-    }
-}
-
-unsafe fn account_info_with_borrow_state(
-    key: Pubkey,
-    data: &[u8],
-    borrow_state: u8,
-) -> AccountInfoWithBacking {
-    #[repr(C)]
-    #[derive(Clone, Copy, Default)]
-    struct Header {
-        borrow_state: u8,
-        is_signer: u8,
-        is_writable: u8,
-        executable: u8,
-        resize_delta: i32,
-        key: Pubkey,
-        owner: Pubkey,
-        lamports: u64,
-        data_len: u64,
-    }
-    let hdr_len = mem::size_of::<Header>();
-    let total = hdr_len + data.len();
-    let words = (total + 7) / 8;
-    let mut backing: std::vec::Vec<u64> = std::vec![0u64; words];
-    let hdr_ptr = backing.as_mut_ptr() as *mut Header;
-    ptr::write(
-        hdr_ptr,
-        Header {
-            borrow_state,
-            is_signer: 0,
-            is_writable: 0,
-            executable: 0,
-            resize_delta: 0,
-            key,
-            owner: [0u8; 32],
-            lamports: 0,
-            data_len: data.len() as u64,
-        },
-    );
-    ptr::copy_nonoverlapping(data.as_ptr(), (hdr_ptr as *mut u8).add(hdr_len), data.len());
-    AccountInfoWithBacking {
-        info: AccountInfo {
-            raw: hdr_ptr as *mut Account,
-        },
-        _backing: backing,
-    }
-}
+use super::test_utils::{build_slot_hashes_bytes as raw_slot_hashes, make_account_info};
 
 #[test]
 fn wrong_key_from_account_info() {
     let bytes = raw_slot_hashes(0, &[]);
-    let acct_with = unsafe { account_info_with([1u8; 32], &bytes) };
+    let (info, _backing) = unsafe { make_account_info([1u8; 32], &bytes, crate::NON_DUP_MARKER) };
     assert!(matches!(
-        SlotHashes::from_account_info(&acct_with.info),
+        SlotHashes::from_account_info(&info),
         Err(ProgramError::Custom(ERR_WRONG_ACCOUNT_KEY))
     ));
 }
@@ -197,9 +88,9 @@ fn zero_len_minimal_slice_iterates_empty() {
 #[test]
 fn borrow_state_failure_from_account_info() {
     let bytes = raw_slot_hashes(0, &[]);
-    let acct_with = unsafe { account_info_with_borrow_state(SLOTHASHES_ID, &bytes, 0) };
+    let (info, _backing) = unsafe { make_account_info(SLOTHASHES_ID, &bytes, 0) };
     assert!(matches!(
-        SlotHashes::from_account_info(&acct_with.info),
+        SlotHashes::from_account_info(&info),
         Err(ProgramError::AccountBorrowFailed)
     ));
 }

@@ -7,70 +7,9 @@ use crate::{
 };
 use core::ptr;
 extern crate std;
+use super::test_utils::*;
 use std::io::Write;
 use std::vec::Vec;
-
-fn create_mock_data_max_size(entries: &[(u64, [u8; 32])]) -> Vec<u8> {
-    let num_entries = entries.len() as u64;
-    let mut data = std::vec![0u8; MAX_SIZE];
-    data[0..NUM_ENTRIES_SIZE].copy_from_slice(&num_entries.to_le_bytes());
-    let mut offset = NUM_ENTRIES_SIZE;
-    for (slot, hash) in entries {
-        data[offset..offset + SLOT_SIZE].copy_from_slice(&slot.to_le_bytes());
-        data[offset + SLOT_SIZE..offset + ENTRY_SIZE].copy_from_slice(hash);
-        offset += ENTRY_SIZE;
-    }
-    data
-}
-
-#[allow(dead_code)]
-#[derive(Clone, Copy, Debug)]
-enum DecrementStrategy {
-    Strictly1,
-    Average1_05,
-    Average2,
-}
-
-fn simple_prng(seed: u64) -> u64 {
-    const A: u64 = 16807;
-    const M: u64 = 2147483647;
-    let initial_state = if seed == 0 { 1 } else { seed };
-    (A.wrapping_mul(initial_state)) % M
-}
-
-fn generate_mock_entries(
-    num_entries: usize,
-    start_slot: u64,
-    strategy: DecrementStrategy,
-) -> Vec<(u64, [u8; 32])> {
-    let mut entries = Vec::with_capacity(num_entries);
-    let mut current_slot = start_slot;
-    for i in 0..num_entries {
-        let hash_byte = (i % 256) as u8;
-        let hash = [hash_byte; 32];
-        entries.push((current_slot, hash));
-        let random_val = simple_prng(i as u64);
-        let decrement = match strategy {
-            DecrementStrategy::Strictly1 => 1,
-            DecrementStrategy::Average1_05 => {
-                if random_val % 20 == 0 {
-                    2
-                } else {
-                    1
-                }
-            }
-            DecrementStrategy::Average2 => {
-                if random_val % 2 == 0 {
-                    1
-                } else {
-                    3
-                }
-            }
-        };
-        current_slot = current_slot.saturating_sub(decrement);
-    }
-    entries
-}
 
 #[test]
 fn test_from_account_info_constructor() {
@@ -82,7 +21,7 @@ fn test_from_account_info_constructor() {
     const START_SLOT: u64 = 1234;
 
     let mock_entries = generate_mock_entries(NUM_ENTRIES, START_SLOT, DecrementStrategy::Strictly1);
-    let data = create_mock_data_max_size(&mock_entries);
+    let data = create_mock_data(&mock_entries);
 
     let mut aligned_backing: Vec<u64>;
     #[allow(unused_assignments)]
@@ -147,7 +86,7 @@ fn test_from_account_info_constructor() {
 fn test_fetch_std_path() {
     const START_SLOT: u64 = 500;
     let entries = generate_mock_entries(5, START_SLOT, DecrementStrategy::Strictly1);
-    let data = create_mock_data_max_size(&entries);
+    let data = create_mock_data(&entries);
 
     let mut slot_hashes =
         SlotHashes::<std::boxed::Box<[u8]>>::fetch().expect("fetch() should succeed on host");

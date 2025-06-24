@@ -8,6 +8,8 @@ mod test_edge;
 mod test_raw;
 #[cfg(test)]
 mod test_std;
+#[cfg(test)]
+mod test_utils;
 
 use crate::{
     account_info::{AccountInfo, Ref},

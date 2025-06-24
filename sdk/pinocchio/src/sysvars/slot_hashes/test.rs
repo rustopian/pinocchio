@@ -4,6 +4,7 @@ use crate::{
 };
 use core::mem::{align_of, size_of};
 extern crate std;
+use super::test_utils::*;
 use std::vec::Vec;
 
 #[test]
@@ -55,70 +56,6 @@ fn test_layout_constants() {
         &SLOTHASHES_ID,
         "SysvarS1otHashes111111111111111111111111111",
     );
-}
-
-fn create_mock_data(entries: &[(u64, [u8; 32])]) -> Vec<u8> {
-    let num_entries = entries.len() as u64;
-    let mut data = std::vec![0u8; MAX_SIZE];
-    data[0..NUM_ENTRIES_SIZE].copy_from_slice(&num_entries.to_le_bytes());
-    let mut offset = NUM_ENTRIES_SIZE;
-    for (slot, hash) in entries {
-        data[offset..offset + SLOT_SIZE].copy_from_slice(&slot.to_le_bytes());
-        data[offset + SLOT_SIZE..offset + ENTRY_SIZE].copy_from_slice(hash);
-        offset += ENTRY_SIZE;
-    }
-    data
-}
-
-fn generate_mock_entries(
-    num_entries: usize,
-    start_slot: u64,
-    strategy: DecrementStrategy,
-) -> Vec<(u64, [u8; 32])> {
-    let mut entries = Vec::with_capacity(num_entries);
-    let mut current_slot = start_slot;
-    for i in 0..num_entries {
-        let hash_byte = (i % 256) as u8;
-        let hash = [hash_byte; 32];
-        entries.push((current_slot, hash));
-        let random_val = simple_prng(i as u64);
-        let decrement = match strategy {
-            DecrementStrategy::Strictly1 => 1,
-            DecrementStrategy::Average1_05 => {
-                if random_val % 20 == 0 {
-                    2
-                } else {
-                    1
-                }
-            }
-            #[allow(dead_code)] // May be used by benchmarks
-            DecrementStrategy::Average2 => {
-                if random_val % 2 == 0 {
-                    1
-                } else {
-                    3
-                }
-            }
-        };
-        current_slot = current_slot.saturating_sub(decrement);
-    }
-    entries
-}
-
-#[derive(Clone, Copy, Debug)]
-#[allow(dead_code)]
-enum DecrementStrategy {
-    Strictly1,
-    Average1_05,
-    Average2,
-}
-
-// Stand-in for proper fuzz (todo)
-fn simple_prng(seed: u64) -> u64 {
-    const A: u64 = 16807;
-    const M: u64 = 2147483647;
-    let initial_state = if seed == 0 { 1 } else { seed };
-    (A.wrapping_mul(initial_state)) % M
 }
 
 #[test]
