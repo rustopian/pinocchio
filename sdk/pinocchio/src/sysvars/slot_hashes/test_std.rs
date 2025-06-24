@@ -81,16 +81,28 @@ fn test_from_account_info_constructor() {
     }
 }
 
+/// Host-side sanity test: ensure the `SlotHashes::fetch()` helper compiles and
+/// allocates a MAX_SIZE-sized buffer without panicking.
+///
+/// On non-Solana targets the underlying syscall is stubbed; the returned buffer
+/// is zero-initialised and contains zero entries.  We overwrite
+/// that buffer with deterministic fixture data and then exercise the normal
+/// `SlotHashes` getters to make sure the view itself works.  We do not verify
+/// that the syscall populated real on-chain bytes, as doing so requires an
+/// environment outside the scope of host `cargo test`.
 #[cfg(feature = "std")]
 #[test]
-fn test_fetch_std_path() {
+fn test_fetch_allocates_buffer_host() {
     const START_SLOT: u64 = 500;
     let entries = generate_mock_entries(5, START_SLOT, DecrementStrategy::Strictly1);
     let data = create_mock_data(&entries);
 
+    // This should allocate a 20_488-byte boxed slice and *not* panic.
     let mut slot_hashes =
-        SlotHashes::<std::boxed::Box<[u8]>>::fetch().expect("fetch() should succeed on host");
+        SlotHashes::<std::boxed::Box<[u8]>>::fetch().expect("fetch() should allocate");
 
+    // Overwrite the stubbed contents with known data so we can reuse the
+    // remainder of the test harness.
     slot_hashes.data[..data.len()].copy_from_slice(&data);
 
     assert_eq!(slot_hashes.len(), entries.len());

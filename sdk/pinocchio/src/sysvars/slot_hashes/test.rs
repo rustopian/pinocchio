@@ -313,8 +313,15 @@ fn mock_fetch_into_unchecked(
     Ok(())
 }
 
+/// Verifies that the mock byte-copy helper (`mock_fetch_into_unchecked`) obeys
+/// the same offset semantics we expect from the real `raw::fetch_into_*` API.
+///
+/// This is purely an internal byte-math test; it does not call the
+/// production syscall wrapper and therefore does not attest that the runtime
+/// offset logic works.  Its value is guarding against mistakes
+/// in the offset arithmetic used by other in-test helpers.
 #[test]
-fn test_offset_functionality_with_mock() {
+fn test_mock_offset_copy() {
     // Create mock sysvar data: 8-byte length + 3 entries
     let entries = &[
         (100u64, [1u8; HASH_BYTES]),

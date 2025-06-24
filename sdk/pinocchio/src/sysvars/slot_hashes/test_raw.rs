@@ -70,8 +70,11 @@ fn test_fetch_into_offset_validation() {
     assert!(validate_fetch_offset(8 + 512 * ENTRY_SIZE, 40).is_err());
 }
 
+/// Host-only smoke test for `raw::fetch_into`.
+///
+/// On a host build the underlying sysvar syscall is stubbed out.
 #[test]
-fn test_fetch_into_end_to_end() {
+fn test_fetch_into_host_stub() {
     use super::raw;
 
     // 1. Full-size buffer, offset 0.
