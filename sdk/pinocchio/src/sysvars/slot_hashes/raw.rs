@@ -11,9 +11,26 @@ use super::*;
 /// Validates that a buffer is properly sized for SlotHashes data.
 ///
 /// Checks that the buffer length is 8 + (N × 40) for some N ≤ 512.
+/// Unlike the `SlotHashes` constructor, this function does not require
+/// the buffer to be exactly 20,488 bytes.
 #[inline(always)]
 pub(crate) fn validate_buffer_size(buffer_len: usize) -> Result<(), ProgramError> {
-    super::validate_slothashes_constraints(buffer_len, None)?;
+    // Must have space for 8-byte header
+    if buffer_len < NUM_ENTRIES_SIZE {
+        return Err(ProgramError::AccountDataTooSmall);
+    }
+
+    // Calculate how many entries can fit
+    let data_len = buffer_len - NUM_ENTRIES_SIZE;
+    if data_len % ENTRY_SIZE != 0 {
+        return Err(ProgramError::InvalidArgument);
+    }
+
+    let max_entries = data_len / ENTRY_SIZE;
+    if max_entries > MAX_ENTRIES {
+        return Err(ProgramError::InvalidArgument);
+    }
+
     Ok(())
 }
 

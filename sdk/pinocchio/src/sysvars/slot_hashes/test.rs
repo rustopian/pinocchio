@@ -59,8 +59,7 @@ fn test_layout_constants() {
 
 fn create_mock_data(entries: &[(u64, [u8; 32])]) -> Vec<u8> {
     let num_entries = entries.len() as u64;
-    let data_len = NUM_ENTRIES_SIZE + entries.len() * ENTRY_SIZE;
-    let mut data = std::vec![0u8; data_len];
+    let mut data = std::vec![0u8; MAX_SIZE];
     data[0..NUM_ENTRIES_SIZE].copy_from_slice(&num_entries.to_le_bytes());
     let mut offset = NUM_ENTRIES_SIZE;
     for (slot, hash) in entries {
@@ -137,7 +136,7 @@ fn test_binary_search_no_std() {
     let mid_slot = entries[mid_index].0;
     let last_slot = entries[entry_count - 1].0;
 
-    let slot_hashes = unsafe { SlotHashes::new_unchecked(data.as_slice(), entry_count) };
+    let slot_hashes = unsafe { SlotHashes::new_unchecked(data.as_slice()) };
 
     assert_eq!(slot_hashes.position(first_slot), Some(0));
 
@@ -183,7 +182,7 @@ fn test_binary_search_no_std() {
     // Test empty list explicitly
     let empty_entries = generate_mock_entries(0, START_SLOT, DecrementStrategy::Strictly1);
     let empty_data = create_mock_data(&empty_entries);
-    let empty_hashes = unsafe { SlotHashes::new_unchecked(empty_data.as_slice(), 0) };
+    let empty_hashes = unsafe { SlotHashes::new_unchecked(empty_data.as_slice()) };
     assert_eq!(empty_hashes.get_hash(100), None);
 
     let pos_start_plus_1 = slot_hashes.position(START_SLOT + 1);
@@ -199,10 +198,10 @@ fn test_basic_getters_and_iterator_no_std() {
     const START_SLOT: u64 = 2000;
     let entries = generate_mock_entries(NUM_ENTRIES, START_SLOT, DecrementStrategy::Strictly1);
     let data = create_mock_data(&entries);
-    let slot_hashes = unsafe { SlotHashes::new_unchecked(data.as_slice(), NUM_ENTRIES) };
+    let slot_hashes = unsafe { SlotHashes::new_unchecked(data.as_slice()) };
 
     assert_eq!(slot_hashes.len(), NUM_ENTRIES);
-    assert!(!slot_hashes.is_empty());
+    assert!(slot_hashes.len() > 0);
 
     let entry0 = slot_hashes.get_entry(0);
     assert!(entry0.is_some());
@@ -235,76 +234,45 @@ fn test_basic_getters_and_iterator_no_std() {
 
     // Test empty case
     let empty_data = create_mock_data(&[]);
-    let empty_hashes = unsafe { SlotHashes::new_unchecked(empty_data.as_slice(), 0) };
+    let empty_hashes = unsafe { SlotHashes::new_unchecked(empty_data.as_slice()) };
     assert_eq!(empty_hashes.len(), 0);
-    assert!(empty_hashes.is_empty());
     assert!(empty_hashes.get_entry(0).is_none());
     assert!(empty_hashes.into_iter().next().is_none());
 }
 
 #[test]
-fn test_get_entry_count_no_std() {
+fn test_entry_count_no_std() {
     // Valid data (2 entries)
     let entries: &[(Slot, [u8; HASH_BYTES])] = &[(100, [1u8; HASH_BYTES]), (98, [2u8; HASH_BYTES])];
-    let num_entries_bytes = (entries.len() as u64).to_le_bytes();
-    const TEST_LEN: usize = 2;
-    let mut raw_data = [0u8; NUM_ENTRIES_SIZE + TEST_LEN * ENTRY_SIZE];
-    raw_data[..NUM_ENTRIES_SIZE].copy_from_slice(&num_entries_bytes);
-    let mut cursor = NUM_ENTRIES_SIZE;
-    for (slot, hash) in entries {
-        raw_data[cursor..cursor + SLOT_SIZE].copy_from_slice(&slot.to_le_bytes());
-        cursor += SLOT_SIZE;
-        raw_data[cursor..cursor + HASH_BYTES].copy_from_slice(hash.as_ref());
-        cursor += HASH_BYTES;
-    }
-    let data_slice = &raw_data[..cursor];
-
-    let slot_hashes = SlotHashes::new(data_slice).expect("valid data should parse");
+    let data = create_mock_data(entries);
+    let slot_hashes = unsafe { SlotHashes::new_unchecked(data.as_slice()) };
     assert_eq!(slot_hashes.len(), 2);
-    let count_res = slot_hashes.get_entry_count();
-    assert!(count_res.is_ok());
-    assert_eq!(count_res.unwrap(), 2);
-    let count_res_unchecked = unsafe { slot_hashes.get_entry_count_unchecked() };
-    assert_eq!(count_res_unchecked, 2);
 
-    // Data too small (less than len prefix)
-    let short_data_1 = &data_slice[0..NUM_ENTRIES_SIZE - 1];
-    let res1 = SlotHashes::new(short_data_1);
-    assert!(matches!(res1, Err(ProgramError::AccountDataTooSmall)));
-
-    // Data too small (correct len prefix, but not enough data for entries)
-    let short_data_2 = &data_slice[0..NUM_ENTRIES_SIZE + ENTRY_SIZE];
-    let res2 = SlotHashes::new(short_data_2);
-    assert!(matches!(res2, Err(ProgramError::InvalidArgument)));
-
-    let count_res_unchecked_2 = unsafe { read_entry_count_from_bytes_unchecked(short_data_2) };
-    assert_eq!(count_res_unchecked_2, 2);
+    // Too small buffer should fail new()
+    let num_entries = entries.len() as u64;
+    let data_len = NUM_ENTRIES_SIZE + entries.len() * ENTRY_SIZE;
+    let mut small_data = std::vec![0u8; data_len];
+    small_data[0..NUM_ENTRIES_SIZE].copy_from_slice(&num_entries.to_le_bytes());
+    let mut offset = NUM_ENTRIES_SIZE;
+    for (slot, hash) in entries {
+        small_data[offset..offset + SLOT_SIZE].copy_from_slice(&slot.to_le_bytes());
+        small_data[offset + SLOT_SIZE..offset + ENTRY_SIZE].copy_from_slice(hash);
+        offset += ENTRY_SIZE;
+    }
+    let res1 = SlotHashes::new(small_data.as_slice());
+    assert!(matches!(res1, Err(ProgramError::InvalidArgument)));
 
     // Empty data is valid
-    let empty_num_bytes = (0u64).to_le_bytes();
-    let mut empty_raw_data = [0u8; NUM_ENTRIES_SIZE];
-    empty_raw_data[..NUM_ENTRIES_SIZE].copy_from_slice(&empty_num_bytes);
-    let empty_hashes =
-        SlotHashes::new(empty_raw_data.as_slice()).expect("empty data should be valid");
+    let empty_data = create_mock_data(&[]);
+    let empty_hashes = unsafe { SlotHashes::new_unchecked(empty_data.as_slice()) };
     assert_eq!(empty_hashes.len(), 0);
-    let empty_res = empty_hashes.get_entry_count();
-    assert!(empty_res.is_ok());
-    assert_eq!(empty_res.unwrap(), 0);
-    let unsafe_empty_len = unsafe { read_entry_count_from_bytes_unchecked(&empty_raw_data) };
-    assert_eq!(unsafe_empty_len, 0);
 }
 
 #[test]
 fn test_get_entry_unchecked_no_std() {
     let single_entry: &[(Slot, [u8; HASH_BYTES])] = &[(100, [1u8; HASH_BYTES])];
-    let num_entries_bytes_1 = (single_entry.len() as u64).to_le_bytes();
-    const TEST_LEN_1: usize = 1;
-    let mut raw_data_1 = [0u8; NUM_ENTRIES_SIZE + TEST_LEN_1 * ENTRY_SIZE];
-    raw_data_1[..NUM_ENTRIES_SIZE].copy_from_slice(&num_entries_bytes_1);
-    raw_data_1[NUM_ENTRIES_SIZE..NUM_ENTRIES_SIZE + SLOT_SIZE]
-        .copy_from_slice(&single_entry[0].0.to_le_bytes());
-    raw_data_1[NUM_ENTRIES_SIZE + SLOT_SIZE..].copy_from_slice(single_entry[0].1.as_ref());
-    let slot_hashes = unsafe { SlotHashes::new_unchecked(raw_data_1.as_slice(), 1) };
+    let data = create_mock_data(single_entry);
+    let slot_hashes = unsafe { SlotHashes::new_unchecked(data.as_slice()) };
 
     let entry = unsafe { slot_hashes.get_entry_unchecked(0) };
     assert_eq!(entry.slot(), 100);
@@ -317,7 +285,7 @@ fn test_get_entry_unchecked_last_no_std() {
     const START_SLOT: u64 = 600;
     let entries = generate_mock_entries(COUNT, START_SLOT, DecrementStrategy::Strictly1);
     let data = create_mock_data(&entries);
-    let sh = unsafe { SlotHashes::new_unchecked(data.as_slice(), COUNT) };
+    let sh = unsafe { SlotHashes::new_unchecked(data.as_slice()) };
 
     let last = unsafe { sh.get_entry_unchecked(COUNT - 1) };
     assert_eq!(last.slot(), entries[COUNT - 1].0);
@@ -330,7 +298,7 @@ fn test_iterator_into_ref_no_std() {
     const START: u64 = 100;
     let entries = generate_mock_entries(NUM, START, DecrementStrategy::Strictly1);
     let data = create_mock_data(&entries);
-    let sh = unsafe { SlotHashes::new_unchecked(data.as_slice(), NUM) };
+    let sh = unsafe { SlotHashes::new_unchecked(data.as_slice()) };
 
     // Collect slots via iterator
     let mut sum: u64 = 0;
@@ -349,7 +317,7 @@ fn test_iterator_into_ref_no_std() {
 fn mock_data_max_entries_boundary() {
     let entries = generate_mock_entries(MAX_ENTRIES, 1000, DecrementStrategy::Strictly1);
     let data = create_mock_data(&entries);
-    let sh = unsafe { SlotHashes::new_unchecked(data.as_slice(), MAX_ENTRIES) };
+    let sh = unsafe { SlotHashes::new_unchecked(data.as_slice()) };
     assert_eq!(sh.len(), MAX_ENTRIES);
 }
 
@@ -425,7 +393,7 @@ fn test_offset_functionality_with_mock() {
     let entries_size = 3 * ENTRY_SIZE;
     let mut buffer_entries = std::vec![0u8; entries_size];
     mock_fetch_into_unchecked(&mock_sysvar_data, &mut buffer_entries, 8).unwrap();
-    assert_eq!(buffer_entries, &mock_sysvar_data[8..]);
+    assert_eq!(buffer_entries, &mock_sysvar_data[8..8 + entries_size]);
 
     // Test offset 8 + ENTRY_SIZE (skip first entry)
     let remaining_entries_size = 2 * ENTRY_SIZE;
@@ -437,7 +405,10 @@ fn test_offset_functionality_with_mock() {
         skip_first_offset as u64,
     )
     .unwrap();
-    assert_eq!(buffer_skip_first, &mock_sysvar_data[skip_first_offset..]);
+    assert_eq!(
+        buffer_skip_first,
+        &mock_sysvar_data[skip_first_offset..skip_first_offset + remaining_entries_size]
+    );
 
     // Test partial read with small buffer
     let mut small_buffer = [0u8; 16]; // Only 16 bytes
@@ -453,34 +424,10 @@ fn test_offset_functionality_with_mock() {
 }
 
 #[test]
-fn test_get_entry_count_consistency_check() {
-    // Create data with space for 3 entries but only populate 2
-    let entries = &[
-        (100u64, [1u8; HASH_BYTES]),
-        (99u64, [2u8; HASH_BYTES]),
-        (98u64, [3u8; HASH_BYTES]),
-    ];
-    let mut data = create_mock_data(entries);
-
-    let slot_hashes = unsafe { SlotHashes::new_unchecked(data.as_slice(), 3) };
-    assert_eq!(slot_hashes.get_entry_count().unwrap(), 3);
-
-    let slot_hashes_wrong = unsafe { SlotHashes::new_unchecked(data.as_slice(), 2) };
-    assert!(slot_hashes_wrong.get_entry_count().is_err());
-
-    data[0..8].copy_from_slice(&2u64.to_le_bytes()); // Change prefix to 2
-    let slot_hashes_wrong2 = unsafe { SlotHashes::new_unchecked(data.as_slice(), 3) };
-    assert!(slot_hashes_wrong2.get_entry_count().is_err());
-
-    let slot_hashes_consistent = unsafe { SlotHashes::new_unchecked(data.as_slice(), 2) };
-    assert_eq!(slot_hashes_consistent.get_entry_count().unwrap(), 2);
-}
-
-#[test]
 fn test_entries_exposed_no_std() {
     let entries = generate_mock_entries(8, 80, DecrementStrategy::Strictly1);
     let data = create_mock_data(&entries);
-    let sh = unsafe { SlotHashes::new_unchecked(data.as_slice(), entries.len()) };
+    let sh = unsafe { SlotHashes::new_unchecked(data.as_slice()) };
 
     let slice = sh.entries();
     assert_eq!(slice.len(), entries.len());
@@ -494,7 +441,7 @@ fn test_entries_exposed_no_std() {
 fn test_safe_vs_unsafe_getters_consistency() {
     let entries = generate_mock_entries(16, 200, DecrementStrategy::Strictly1);
     let data = create_mock_data(&entries);
-    let sh = unsafe { SlotHashes::new_unchecked(data.as_slice(), entries.len()) };
+    let sh = unsafe { SlotHashes::new_unchecked(data.as_slice()) };
 
     for i in 0..entries.len() {
         let safe_entry = sh.get_entry(i).unwrap();
@@ -502,7 +449,5 @@ fn test_safe_vs_unsafe_getters_consistency() {
         assert_eq!(safe_entry, unsafe_entry);
     }
 
-    let safe_count = sh.get_entry_count().unwrap();
-    let unsafe_count = unsafe { sh.get_entry_count_unchecked() };
-    assert_eq!(safe_count, unsafe_count);
+    assert_eq!(sh.len(), entries.len());
 }

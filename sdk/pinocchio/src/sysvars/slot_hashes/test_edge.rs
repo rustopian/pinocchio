@@ -9,11 +9,13 @@ extern crate std;
 use std::vec::Vec;
 
 fn raw_slot_hashes(declared_len: u64, entries: &[(u64, [u8; HASH_BYTES])]) -> Vec<u8> {
-    let mut v = Vec::with_capacity(NUM_ENTRIES_SIZE + entries.len() * ENTRY_SIZE);
-    v.extend_from_slice(&declared_len.to_le_bytes());
+    let mut v = std::vec![0u8; MAX_SIZE];
+    v[..NUM_ENTRIES_SIZE].copy_from_slice(&declared_len.to_le_bytes());
+    let mut offset = NUM_ENTRIES_SIZE;
     for (slot, hash) in entries {
-        v.extend_from_slice(&slot.to_le_bytes());
-        v.extend_from_slice(hash);
+        v[offset..offset + SLOT_SIZE].copy_from_slice(&slot.to_le_bytes());
+        v[offset + SLOT_SIZE..offset + ENTRY_SIZE].copy_from_slice(hash);
+        offset += ENTRY_SIZE;
     }
     v
 }
@@ -131,13 +133,40 @@ fn too_many_entries_rejected() {
 }
 
 #[test]
-fn truncated_payload_rejected() {
-    let entry = (123u64, [7u8; HASH_BYTES]);
-    let bytes = raw_slot_hashes(2, &[entry]); // says 2 but provides 1
+fn wrong_size_buffer_rejected() {
+    // Test with buffer that's too small
+    let small_buffer = std::vec![0u8; MAX_SIZE - 1];
     assert!(matches!(
-        SlotHashes::new(bytes.as_slice()),
+        SlotHashes::new(small_buffer.as_slice()),
         Err(ProgramError::InvalidArgument)
     ));
+
+    // Test with buffer that's too large
+    let large_buffer = std::vec![0u8; MAX_SIZE + 1];
+    assert!(matches!(
+        SlotHashes::new(large_buffer.as_slice()),
+        Err(ProgramError::InvalidArgument)
+    ));
+}
+
+#[test]
+fn truncated_payload_with_max_size_buffer_is_valid() {
+    let entry = (123u64, [7u8; HASH_BYTES]);
+    let bytes = raw_slot_hashes(2, &[entry]); // says 2 but provides 1, rest is zeros
+
+    // With MAX_SIZE buffers, this is now valid - the second entry is just zeros
+    let slot_hashes = SlotHashes::new(bytes.as_slice()).expect("Should be valid");
+    assert_eq!(slot_hashes.len(), 2);
+
+    // First entry should match what we provided
+    let first_entry = slot_hashes.get_entry(0).unwrap();
+    assert_eq!(first_entry.slot(), 123);
+    assert_eq!(first_entry.hash, [7u8; HASH_BYTES]);
+
+    // Second entry should be all zeros (default padding)
+    let second_entry = slot_hashes.get_entry(1).unwrap();
+    assert_eq!(second_entry.slot(), 0);
+    assert_eq!(second_entry.hash, [0u8; HASH_BYTES]);
 }
 
 #[test]
@@ -148,7 +177,7 @@ fn duplicate_slots_binary_search_safe() {
         (199, [2u8; HASH_BYTES]),
     ];
     let bytes = raw_slot_hashes(entries.len() as u64, entries);
-    let sh = unsafe { SlotHashes::new_unchecked(&bytes[..], entries.len()) };
+    let sh = unsafe { SlotHashes::new_unchecked(&bytes[..]) };
     let dup_pos = sh.position(200).expect("slot 200 must exist");
     assert!(
         dup_pos <= 1,
@@ -159,8 +188,8 @@ fn duplicate_slots_binary_search_safe() {
 
 #[test]
 fn zero_len_minimal_slice_iterates_empty() {
-    let zero_bytes = 0u64.to_le_bytes();
-    let sh = unsafe { SlotHashes::new_unchecked(&zero_bytes[..], 0) };
+    let zero_data = raw_slot_hashes(0, &[]);
+    let sh = unsafe { SlotHashes::new_unchecked(&zero_data[..]) };
     assert_eq!(sh.len(), 0);
     assert!(sh.into_iter().next().is_none());
 }

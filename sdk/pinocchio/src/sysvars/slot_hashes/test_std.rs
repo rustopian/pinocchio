@@ -10,10 +10,9 @@ extern crate std;
 use std::io::Write;
 use std::vec::Vec;
 
-fn create_mock_data(entries: &[(u64, [u8; 32])]) -> Vec<u8> {
+fn create_mock_data_max_size(entries: &[(u64, [u8; 32])]) -> Vec<u8> {
     let num_entries = entries.len() as u64;
-    let data_len = NUM_ENTRIES_SIZE + entries.len() * ENTRY_SIZE;
-    let mut data = std::vec![0u8; data_len];
+    let mut data = std::vec![0u8; MAX_SIZE];
     data[0..NUM_ENTRIES_SIZE].copy_from_slice(&num_entries.to_le_bytes());
     let mut offset = NUM_ENTRIES_SIZE;
     for (slot, hash) in entries {
@@ -83,7 +82,7 @@ fn test_from_account_info_constructor() {
     const START_SLOT: u64 = 1234;
 
     let mock_entries = generate_mock_entries(NUM_ENTRIES, START_SLOT, DecrementStrategy::Strictly1);
-    let data = create_mock_data(&mock_entries);
+    let data = create_mock_data_max_size(&mock_entries);
 
     let mut aligned_backing: Vec<u64>;
     #[allow(unused_assignments)]
@@ -148,13 +147,12 @@ fn test_from_account_info_constructor() {
 fn test_fetch_std_path() {
     const START_SLOT: u64 = 500;
     let entries = generate_mock_entries(5, START_SLOT, DecrementStrategy::Strictly1);
-    let data = create_mock_data(&entries);
+    let data = create_mock_data_max_size(&entries);
 
     let mut slot_hashes =
         SlotHashes::<std::boxed::Box<[u8]>>::fetch().expect("fetch() should succeed on host");
 
     slot_hashes.data[..data.len()].copy_from_slice(&data);
-    slot_hashes.len = unsafe { read_entry_count_from_bytes_unchecked(&slot_hashes.data) };
 
     assert_eq!(slot_hashes.len(), entries.len());
     for (i, entry) in slot_hashes.into_iter().enumerate() {
