@@ -170,10 +170,7 @@ impl<T: Deref<Target = [u8]>> SlotHashes<T> {
     #[inline(always)]
     pub fn get_hash(&self, target_slot: Slot) -> Option<&[u8; HASH_BYTES]> {
         let entries = self.as_entries_slice();
-        entries
-            .binary_search_by(|e| e.slot().cmp(&target_slot).reverse())
-            .ok()
-            .map(|idx| &entries[idx].hash)
+        self.position(target_slot).map(|index| &entries[index].hash)
     }
 
     /// Finds the position (index) of a specific slot using binary search.
