@@ -87,8 +87,22 @@ pub fn fetch_into(buffer: &mut [u8], offset: usize) -> Result<usize, ProgramErro
 }
 
 /// Copies SlotHashes sysvar bytes into `buffer` **without** validation.
+///
+/// The caller is responsible for ensuring that:
+/// 1. `buffer` is large enough for the requested `offset`+`buffer.len()` range and
+///    properly laid out (see `validate_buffer_size` and `validate_fetch_offset`).
+/// 2. The memory behind `buffer` is writable for its full length.
+///
+/// # Safety
+/// Internally this function performs an unchecked Solana syscall that writes
+/// raw bytes into the provided pointer. That call is wrapped in an `unsafe`
+/// block with the guarantees listed above.
 #[inline(always)]
 pub fn fetch_into_unchecked(buffer: &mut [u8], offset: usize) -> Result<(), ProgramError> {
+    // SAFETY: `buffer.as_mut_ptr()` is valid for `buffer.len()` bytes and
+    // writable for the duration of the call. We rely on the caller to have
+    // ensured that `offset + buffer.len()` does not exceed the real sysvar
+    // size (`MAX_SIZE`).
     unsafe {
         crate::sysvars::get_sysvar_unchecked(
             buffer.as_mut_ptr(),

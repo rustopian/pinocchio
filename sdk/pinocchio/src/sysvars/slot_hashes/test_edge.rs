@@ -119,7 +119,7 @@ fn wrong_key_from_account_info() {
     let acct_with = unsafe { account_info_with([1u8; 32], &bytes) };
     assert!(matches!(
         SlotHashes::from_account_info(&acct_with.info),
-        Err(ProgramError::InvalidArgument)
+        Err(ProgramError::Custom(ERR_WRONG_ACCOUNT_KEY))
     ));
 }
 
@@ -128,7 +128,7 @@ fn too_many_entries_rejected() {
     let bytes = raw_slot_hashes((MAX_ENTRIES as u64) + 1, &[]);
     assert!(matches!(
         SlotHashes::new(bytes.as_slice()),
-        Err(ProgramError::InvalidArgument)
+        Err(ProgramError::Custom(ERR_ENTRYCOUNT_OVERFLOW))
     ));
 }
 
@@ -138,14 +138,14 @@ fn wrong_size_buffer_rejected() {
     let small_buffer = std::vec![0u8; MAX_SIZE - 1];
     assert!(matches!(
         SlotHashes::new(small_buffer.as_slice()),
-        Err(ProgramError::InvalidArgument)
+        Err(ProgramError::Custom(ERR_DATA_LEN_MISMATCH))
     ));
 
     // Test with buffer that's too large
     let large_buffer = std::vec![0u8; MAX_SIZE + 1];
     assert!(matches!(
         SlotHashes::new(large_buffer.as_slice()),
-        Err(ProgramError::InvalidArgument)
+        Err(ProgramError::Custom(ERR_DATA_LEN_MISMATCH))
     ));
 }
 
