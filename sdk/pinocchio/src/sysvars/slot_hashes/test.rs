@@ -201,7 +201,6 @@ fn test_basic_getters_and_iterator_no_std() {
     let slot_hashes = unsafe { SlotHashes::new_unchecked(data.as_slice()) };
 
     assert_eq!(slot_hashes.len(), NUM_ENTRIES);
-    assert!(slot_hashes.len() > 0);
 
     let entry0 = slot_hashes.get_entry(0);
     assert!(entry0.is_some());
