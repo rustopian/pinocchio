@@ -453,3 +453,10 @@ fn test_safe_vs_unsafe_getters_consistency() {
 
     assert_eq!(sh.len(), entries.len());
 }
+
+#[test]
+fn entry_count_header_too_short() {
+    let short = [0u8; 4];
+    assert!(SlotHashes::new(&short[..]).is_err());
+    assert_eq!(read_entry_count_from_bytes(&short), None);
+}
