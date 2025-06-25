@@ -156,7 +156,10 @@ impl<T: Deref<Target = [u8]>> SlotHashes<T> {
     ///
     #[inline(always)]
     pub unsafe fn new_unchecked(data: T) -> Self {
-        debug_assert!(data.len() == MAX_SIZE);
+        if cfg!(debug_assertions) {
+            parse_and_validate_data(&data)
+                .expect("`data` matches all the same requirements as for `new()`");
+        }
 
         SlotHashes { data }
     }
