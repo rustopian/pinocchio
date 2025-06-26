@@ -126,7 +126,9 @@ pub fn log(input: TokenStream) -> TokenStream {
         .into();
     }
 
-    if !placeholders.is_empty() {
+    if placeholders.is_empty() {
+        TokenStream::from(quote! {pinocchio_log::logger::log_message(#format_string.as_bytes());})
+    } else {
         // The parts of the format string with the placeholders replaced by arguments.
         let mut replaced_parts = Vec::new();
 
@@ -231,8 +233,6 @@ pub fn log(input: TokenStream) -> TokenStream {
                 logger.log();
             }
         })
-    } else {
-        TokenStream::from(quote! {pinocchio_log::logger::log_message(#format_string.as_bytes());})
     }
 }
 

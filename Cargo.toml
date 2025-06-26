@@ -35,6 +35,8 @@ unexpected_cfgs = { level = "warn", check-cfg = [
 [workspace.lints.clippy]
 doc_markdown = "warn"
 ptr_as_ptr = "warn"
+if_not_else = "warn"
+
 
 [workspace.metadata.cli]
 solana = "2.2.0"

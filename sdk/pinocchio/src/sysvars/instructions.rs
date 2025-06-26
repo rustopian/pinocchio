@@ -61,7 +61,8 @@ where
         let offset = *self
             .data
             .as_ptr()
-            .add(size_of::<u16>() + index * size_of::<u16>()).cast::<u16>();
+            .add(size_of::<u16>() + index * size_of::<u16>())
+            .cast::<u16>();
 
         IntrospectedInstruction {
             raw: self.data.as_ptr().add(offset as usize),
@@ -172,9 +173,12 @@ impl IntrospectedInstruction<'_> {
 
         // SAFETY: The program ID is located after the account metas.
         unsafe {
-            &*self.raw.add(
-                size_of::<u16>() + num_accounts as usize * size_of::<IntrospectedAccountMeta>(),
-            ).cast::<Pubkey>()
+            &*self
+                .raw
+                .add(
+                    size_of::<u16>() + num_accounts as usize * size_of::<IntrospectedAccountMeta>(),
+                )
+                .cast::<Pubkey>()
         }
     }
 

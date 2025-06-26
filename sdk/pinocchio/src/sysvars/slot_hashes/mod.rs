@@ -236,7 +236,10 @@ impl<T: Deref<Target = [u8]>> SlotHashes<T> {
             // Therefore the constructed slice is valid
             // for `len` elements for the lifetime of `&self`.
             from_raw_parts(
-                self.data.as_ptr().add(NUM_ENTRIES_SIZE).cast::<SlotHashEntry>(),
+                self.data
+                    .as_ptr()
+                    .add(NUM_ENTRIES_SIZE)
+                    .cast::<SlotHashEntry>(),
                 len,
             )
         }
