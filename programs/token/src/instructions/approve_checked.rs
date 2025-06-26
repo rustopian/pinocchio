@@ -62,7 +62,7 @@ impl ApproveChecked<'_> {
         let instruction = Instruction {
             program_id: &crate::ID,
             accounts: &account_metas,
-            data: unsafe { from_raw_parts(instruction_data.as_ptr() as _, 10) },
+            data: unsafe { from_raw_parts(instruction_data.as_ptr().cast(), 10) },
         };
 
         invoke_signed(

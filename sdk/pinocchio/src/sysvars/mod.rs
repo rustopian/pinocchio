@@ -46,7 +46,7 @@ macro_rules! impl_sysvar_get {
     ($syscall_name:ident) => {
         fn get() -> Result<Self, $crate::program_error::ProgramError> {
             let mut var = core::mem::MaybeUninit::<Self>::uninit();
-            let var_addr = var.as_mut_ptr() as *mut _ as *mut u8;
+            let var_addr = var.as_mut_ptr().cast::<u8>();
 
             #[cfg(target_os = "solana")]
             let result = unsafe { $crate::syscalls::$syscall_name(var_addr) };

@@ -60,7 +60,7 @@ impl InitializeMint2<'_> {
         let instruction = Instruction {
             program_id: &crate::ID,
             accounts: &account_metas,
-            data: unsafe { from_raw_parts(instruction_data.as_ptr() as _, 67) },
+            data: unsafe { from_raw_parts(instruction_data.as_ptr().cast(), 67) },
         };
 
         invoke_signed(&instruction, &[self.mint], signers)

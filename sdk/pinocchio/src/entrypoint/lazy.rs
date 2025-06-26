@@ -248,7 +248,7 @@ impl InstructionContext {
     #[allow(clippy::cast_ptr_alignment, clippy::missing_safety_doc)]
     #[inline(always)]
     unsafe fn read_account(&mut self) -> MaybeAccount {
-        let account: *mut Account = self.buffer as *mut Account;
+        let account: *mut Account = self.buffer.cast::<Account>();
         // Adds an 8-bytes offset for:
         //   - rent epoch in case of a non-duplicate account
         //   - duplicate marker + 7 bytes of padding in case of a duplicate account

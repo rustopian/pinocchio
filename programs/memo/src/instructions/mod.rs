@@ -52,7 +52,7 @@ impl Memo<'_, '_, '_> {
         let instruction = Instruction {
             program_id: &crate::ID,
             accounts: unsafe {
-                core::slice::from_raw_parts(account_metas.as_ptr() as _, num_accounts)
+                core::slice::from_raw_parts(account_metas.as_ptr().cast(), num_accounts)
             },
             data: self.memo.as_bytes(),
         };

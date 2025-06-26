@@ -137,6 +137,6 @@ impl Clock {
     /// that is has the expected length.
     #[inline]
     pub unsafe fn from_bytes_unchecked(bytes: &[u8]) -> &Self {
-        &*(bytes.as_ptr() as *const Clock)
+        &*bytes.as_ptr().cast::<Clock>()
     }
 }

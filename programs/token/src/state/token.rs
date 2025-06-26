@@ -32,7 +32,7 @@ pub struct TokenAccount {
     /// Indicates whether this account represents a native token or not.
     is_native: [u8; 4],
 
-    /// If is_native.is_some, this is a native token, and the value logs the
+    /// If `is_native.is_some`, this is a native token, and the value logs the
     /// rent-exempt reserve. An Account is required to be rent-exempt, so
     /// the value is used by the Processor to ensure that wrapped SOL
     /// accounts do not drop below this threshold.
@@ -99,7 +99,7 @@ impl TokenAccount {
     /// The caller must ensure that `bytes` contains a valid representation of `TokenAccount`.
     #[inline(always)]
     pub unsafe fn from_bytes(bytes: &[u8]) -> &Self {
-        &*(bytes.as_ptr() as *const TokenAccount)
+        &*bytes.as_ptr().cast::<TokenAccount>()
     }
 
     pub fn mint(&self) -> &Pubkey {
@@ -111,7 +111,7 @@ impl TokenAccount {
     }
 
     pub fn amount(&self) -> u64 {
-        unsafe { core::ptr::read_unaligned(self.amount.as_ptr() as *const u64) }
+        unsafe { core::ptr::read_unaligned(self.amount.as_ptr().cast::<u64>()) }
     }
 
     #[inline(always)]
@@ -157,11 +157,11 @@ impl TokenAccount {
     /// skips the `Option` check.
     #[inline(always)]
     pub fn native_amount_unchecked(&self) -> u64 {
-        unsafe { core::ptr::read_unaligned(self.native_amount.as_ptr() as *const u64) }
+        unsafe { core::ptr::read_unaligned(self.native_amount.as_ptr().cast::<u64>()) }
     }
 
     pub fn delegated_amount(&self) -> u64 {
-        unsafe { core::ptr::read_unaligned(self.delegated_amount.as_ptr() as *const u64) }
+        unsafe { core::ptr::read_unaligned(self.delegated_amount.as_ptr().cast::<u64>()) }
     }
 
     #[inline(always)]

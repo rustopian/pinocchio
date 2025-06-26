@@ -124,7 +124,7 @@ impl Rent {
     /// that is has the expected length.
     #[inline]
     pub unsafe fn from_bytes_unchecked(bytes: &[u8]) -> &Self {
-        &*(bytes.as_ptr() as *const Rent)
+        &*bytes.as_ptr().cast::<Rent>()
     }
 
     /// Calculate how much rent to burn from the collected rent.
@@ -189,7 +189,7 @@ impl Rent {
     ///
     /// # Returns
     ///
-    /// `true`` if the account is rent exempt, `false`` otherwise.
+    /// `true` if the account is rent exempt, `false` otherwise.
     #[inline]
     pub fn is_exempt(&self, lamports: u64, data_len: usize) -> bool {
         lamports >= self.minimum_balance(data_len)

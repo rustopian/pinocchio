@@ -84,7 +84,7 @@ impl Mint {
     /// The caller must ensure that `bytes` contains a valid representation of `Mint`.
     #[inline(always)]
     pub unsafe fn from_bytes(bytes: &[u8]) -> &Self {
-        &*(bytes.as_ptr() as *const Mint)
+        &*bytes.as_ptr().cast::<Mint>()
     }
 
     #[inline(always)]
@@ -110,7 +110,7 @@ impl Mint {
     }
 
     pub fn supply(&self) -> u64 {
-        unsafe { core::ptr::read_unaligned(self.supply.as_ptr() as *const u64) }
+        unsafe { core::ptr::read_unaligned(self.supply.as_ptr().cast::<u64>()) }
     }
 
     pub fn decimals(&self) -> u8 {

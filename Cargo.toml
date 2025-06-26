@@ -26,6 +26,16 @@ quote = "1.0"
 regex = "1"
 syn = "1.0"
 
+[workspace.lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = [
+    'cfg(target_os, values("solana"))',
+    'cfg(target_feature, values("static-syscalls"))',
+] }
+
+[workspace.lints.clippy]
+doc_markdown = "warn"
+ptr_as_ptr = "warn"
+
 [workspace.metadata.cli]
 solana = "2.2.0"
 

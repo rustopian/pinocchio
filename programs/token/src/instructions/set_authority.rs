@@ -73,7 +73,7 @@ impl SetAuthority<'_> {
         let instruction = Instruction {
             program_id: &crate::ID,
             accounts: &account_metas,
-            data: unsafe { from_raw_parts(instruction_data.as_ptr() as _, 35) },
+            data: unsafe { from_raw_parts(instruction_data.as_ptr().cast(), 35) },
         };
 
         invoke_signed(&instruction, &[self.account, self.authority], signers)
