@@ -265,7 +265,7 @@ impl AccountInfo {
         // check if the account lamports are already borrowed
         self.can_borrow_lamports()?;
 
-        let borrow_state = self.raw as *mut u8;
+        let borrow_state = self.raw.cast::<u8>();
         // SAFETY: The `borrow_state` is a mutable pointer to the borrow state
         // of the account, which is guaranteed to be valid.
         //
@@ -288,7 +288,7 @@ impl AccountInfo {
         // check if the account lamports are already borrowed
         self.can_borrow_mut_lamports()?;
 
-        let borrow_state = self.raw as *mut u8;
+        let borrow_state = self.raw.cast::<u8>();
         // SAFETY: The `borrow_state` is a mutable pointer to the borrow state
         // of the account, which is guaranteed to be valid.
         //
@@ -360,7 +360,7 @@ impl AccountInfo {
         // check if the account data is already borrowed
         self.can_borrow_data()?;
 
-        let borrow_state = self.raw as *mut u8;
+        let borrow_state = self.raw.cast::<u8>();
         // SAFETY: The `borrow_state` is a mutable pointer to the borrow state
         // of the account, which is guaranteed to be valid.
         //
@@ -383,7 +383,7 @@ impl AccountInfo {
         // check if the account data is already borrowed
         self.can_borrow_mut_data()?;
 
-        let borrow_state = self.raw as *mut u8;
+        let borrow_state = self.raw.cast::<u8>();
         // SAFETY: The `borrow_state` is a mutable pointer to the borrow state
         // of the account, which is guaranteed to be valid.
         //
@@ -611,7 +611,7 @@ impl AccountInfo {
 
     /// Returns the memory address of the account data.
     fn data_ptr(&self) -> *mut u8 {
-        unsafe { (self.raw as *mut u8).add(core::mem::size_of::<Account>()) }
+        unsafe { self.raw.cast::<u8>().add(core::mem::size_of::<Account>()) }
     }
 }
 

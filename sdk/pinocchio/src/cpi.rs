@@ -329,7 +329,7 @@ unsafe fn inner_invoke_signed_with_bounds<const MAX_ACCOUNTS: usize>(
     unsafe {
         invoke_signed_unchecked(
             instruction,
-            from_raw_parts(accounts.as_ptr() as _, instruction.accounts.len()),
+            from_raw_parts(accounts.as_ptr().cast(), instruction.accounts.len()),
             signers_seeds,
         );
     }
@@ -534,7 +534,7 @@ impl ReturnData {
 
     /// Return the data set by the program.
     pub fn as_slice(&self) -> &[u8] {
-        unsafe { from_raw_parts(self.data.as_ptr() as _, self.size) }
+        unsafe { from_raw_parts(self.data.as_ptr().cast(), self.size) }
     }
 }
 

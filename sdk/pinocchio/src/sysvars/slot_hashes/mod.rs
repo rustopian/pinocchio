@@ -77,7 +77,7 @@ pub(crate) fn read_entry_count_from_bytes(data: &[u8]) -> Option<usize> {
         // SAFETY: `data` is guaranteed to be at least `NUM_ENTRIES_SIZE` bytes long by the
         // preceding length check, so it is sound to read the first 8 bytes and interpret
         // them as a little-endian `u64`.
-        u64::from_le_bytes(*(data.as_ptr() as *const [u8; NUM_ENTRIES_SIZE]))
+        u64::from_le_bytes(*data.as_ptr().cast::<[u8; NUM_ENTRIES_SIZE]>())
     } as usize)
 }
 
@@ -87,7 +87,7 @@ pub(crate) fn read_entry_count_from_bytes(data: &[u8]) -> Option<usize> {
 /// Caller must ensure data has at least `NUM_ENTRIES_SIZE` bytes.
 #[inline(always)]
 pub(crate) unsafe fn read_entry_count_from_bytes_unchecked(data: &[u8]) -> usize {
-    u64::from_le_bytes(*(data.as_ptr() as *const [u8; 8])) as usize
+    u64::from_le_bytes(*data.as_ptr().cast::<[u8; 8]>()) as usize
 }
 
 /// Validates `SlotHashes` data format assuming golden mainnet length and returns the entry count.
@@ -236,7 +236,7 @@ impl<T: Deref<Target = [u8]>> SlotHashes<T> {
             // Therefore the constructed slice is valid
             // for `len` elements for the lifetime of `&self`.
             from_raw_parts(
-                self.data.as_ptr().add(NUM_ENTRIES_SIZE) as *const SlotHashEntry,
+                self.data.as_ptr().add(NUM_ENTRIES_SIZE).cast::<SlotHashEntry>(),
                 len,
             )
         }

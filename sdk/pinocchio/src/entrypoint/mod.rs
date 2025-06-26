@@ -228,7 +228,7 @@ pub unsafe fn deserialize<'a, const MAX_ACCOUNTS: usize>(
         processed = core::cmp::min(total_accounts, MAX_ACCOUNTS);
 
         for i in 0..processed {
-            let account_info: *mut Account = input as *mut Account;
+            let account_info: *mut Account = input.cast::<Account>();
             // Adds an 8-bytes offset for:
             //   - rent epoch in case of a non-duplicated account
             //   - duplicated marker + 7 bytes of padding in case of a duplicated account
@@ -257,7 +257,7 @@ pub unsafe fn deserialize<'a, const MAX_ACCOUNTS: usize>(
         // data (there is a duplication of logic but we avoid testing whether we
         // have space for the account or not).
         for _ in processed..total_accounts {
-            let account_info: *mut Account = input as *mut Account;
+            let account_info: *mut Account = input.cast::<Account>();
             // Adds an 8-bytes offset for:
             //   - rent epoch in case of a non-duplicate account
             //   - duplicate marker + 7 bytes of padding in case of a duplicate account
@@ -313,7 +313,7 @@ pub unsafe fn parse<const ACCOUNTS: usize>(
     input = input.add(core::mem::size_of::<u64>());
 
     for i in 0..processed {
-        let account_info: *mut Account = input as *mut Account;
+        let account_info: *mut Account = input.cast::<Account>();
         // Adds an 8-bytes offset for:
         //   - rent epoch in case of a non-duplicated account
         //   - duplicated marker + 7 bytes of padding in case of a duplicated account

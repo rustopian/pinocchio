@@ -75,7 +75,7 @@ pub struct Account<'a> {
 
 #[inline(always)]
 const fn offset<T, U>(ptr: *const T, offset: usize) -> *const U {
-    unsafe { (ptr as *const u8).add(offset) as *const U }
+    unsafe { ptr.cast::<u8>().add(offset).cast::<U>() }
 }
 
 impl<'a> From<&'a AccountInfo> for Account<'a> {

@@ -43,7 +43,7 @@ where
         let len = self.data.len();
         // SAFETY: The last 2 bytes of the Instructions sysvar data represents the current
         // instruction index.
-        unsafe { u16::from_le_bytes(*(self.data.as_ptr().add(len - 2) as *const [u8; 2])) }
+        unsafe { u16::from_le_bytes(*self.data.as_ptr().add(len - 2).cast::<[u8; 2]>()) }
     }
 
     /// Creates and returns an `IntrospectedInstruction` for the instruction at the specified index.
@@ -58,10 +58,10 @@ where
         &self,
         index: usize,
     ) -> IntrospectedInstruction {
-        let offset = *(self
+        let offset = *self
             .data
             .as_ptr()
-            .add(size_of::<u16>() + index * size_of::<u16>()) as *const u16);
+            .add(size_of::<u16>() + index * size_of::<u16>()).cast::<u16>();
 
         IntrospectedInstruction {
             raw: self.data.as_ptr().add(offset as usize),
@@ -77,7 +77,7 @@ where
     ) -> Result<IntrospectedInstruction, ProgramError> {
         // SAFETY: The first 2 bytes of the Instructions sysvar data represents the
         // number of instructions.
-        let num_instructions = unsafe { *(self.data.as_ptr() as *const u16) };
+        let num_instructions = unsafe { *self.data.as_ptr().cast::<u16>() };
 
         if index >= num_instructions as usize {
             return Err(ProgramError::InvalidInstructionData);
@@ -140,7 +140,7 @@ impl IntrospectedInstruction<'_> {
     #[inline(always)]
     pub unsafe fn get_account_meta_at_unchecked(&self, index: usize) -> &IntrospectedAccountMeta {
         let offset = core::mem::size_of::<u16>() + (index * IntrospectedAccountMeta::LEN);
-        &*(self.raw.add(offset) as *const IntrospectedAccountMeta)
+        &*self.raw.add(offset).cast::<IntrospectedAccountMeta>()
     }
 
     /// Get the account meta at the specified index.
@@ -154,7 +154,7 @@ impl IntrospectedInstruction<'_> {
         index: usize,
     ) -> Result<&IntrospectedAccountMeta, ProgramError> {
         // SAFETY: The first 2 bytes represent the number of accounts in the instruction.
-        let num_accounts = u16::from_le_bytes(unsafe { *(self.raw as *const [u8; 2]) });
+        let num_accounts = u16::from_le_bytes(unsafe { *self.raw.cast::<[u8; 2]>() });
 
         if index >= num_accounts as usize {
             return Err(ProgramError::InvalidArgument);
@@ -168,13 +168,13 @@ impl IntrospectedInstruction<'_> {
     #[inline(always)]
     pub fn get_program_id(&self) -> &Pubkey {
         // SAFETY: The first 2 bytes represent the number of accounts in the instruction.
-        let num_accounts = u16::from_le_bytes(unsafe { *(self.raw as *const [u8; 2]) });
+        let num_accounts = u16::from_le_bytes(unsafe { *self.raw.cast::<[u8; 2]>() });
 
         // SAFETY: The program ID is located after the account metas.
         unsafe {
-            &*(self.raw.add(
+            &*self.raw.add(
                 size_of::<u16>() + num_accounts as usize * size_of::<IntrospectedAccountMeta>(),
-            ) as *const Pubkey)
+            ).cast::<Pubkey>()
         }
     }
 
@@ -182,13 +182,13 @@ impl IntrospectedInstruction<'_> {
     #[inline(always)]
     pub fn get_instruction_data(&self) -> &[u8] {
         // SAFETY: The first 2 bytes represent the number of accounts in the instruction.
-        let offset = u16::from_le_bytes(unsafe { *(self.raw as *const [u8; 2]) }) as usize
+        let offset = u16::from_le_bytes(unsafe { *self.raw.cast::<[u8; 2]>() }) as usize
             * size_of::<IntrospectedAccountMeta>()
             + PUBKEY_BYTES;
 
         // SAFETY: The instruction data length is located after the program ID.
         let data_len = u16::from_le_bytes(unsafe {
-            *(self.raw.add(size_of::<u16>() + offset) as *const [u8; 2])
+            *self.raw.add(size_of::<u16>() + offset).cast::<[u8; 2]>()
         });
 
         // SAFETY: The instruction data is located after the data length.

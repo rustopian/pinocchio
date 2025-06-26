@@ -73,7 +73,7 @@ impl<const BUFFER: usize> Deref for Logger<BUFFER> {
     fn deref(&self) -> &Self::Target {
         // SAFETY: the slice is created from the buffer up to the length
         // of the message.
-        unsafe { from_raw_parts(self.buffer.as_ptr() as *const _, self.len) }
+        unsafe { from_raw_parts(self.buffer.as_ptr().cast(), self.len) }
     }
 }
 
@@ -309,7 +309,7 @@ macro_rules! impl_log_for_unsigned_integer {
                                     );
 
                                     // Decimal point.
-                                    (ptr.add(integer_part) as *mut u8).write(b'.');
+                                    ptr.add(integer_part).cast::<u8>().write(b'.');
 
                                     // Fractional part of the number.
                                     syscalls::sol_memcpy_(
@@ -330,7 +330,7 @@ macro_rules! impl_log_for_unsigned_integer {
                                     core::ptr::copy_nonoverlapping(source, ptr, integer_part);
 
                                     // Decimal point.
-                                    (ptr.add(integer_part) as *mut u8).write(b'.');
+                                    ptr.add(integer_part).cast::<u8>().write(b'.');
 
                                     // Fractional part of the number.
                                     core::ptr::copy_nonoverlapping(
@@ -542,7 +542,7 @@ impl Log for &str {
                         // Copy the truncated slice to the buffer.
                         core::ptr::copy_nonoverlapping(
                             TRUNCATED_SLICE.as_ptr(),
-                            ptr.add(offset) as *mut _,
+                            ptr.add(offset).cast(),
                             TRUNCATED_SLICE.len(),
                         );
 
@@ -558,7 +558,7 @@ impl Log for &str {
 
         // SAFETY: the `destination` is always within `length_to_write` bounds.
         unsafe {
-            core::ptr::copy_nonoverlapping(source, destination as *mut _, length_to_write);
+            core::ptr::copy_nonoverlapping(source, destination.cast(), length_to_write);
         }
 
         // There might not have been space for all the value.
