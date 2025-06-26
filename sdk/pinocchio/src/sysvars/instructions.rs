@@ -88,7 +88,7 @@ where
     }
 
     /// Creates and returns an `IntrospectedInstruction` relative to the current `Instruction` in the
-    /// currently executing `Transaction.
+    /// currently executing `Transaction`.
     #[inline(always)]
     pub fn get_instruction_relative(
         &self,

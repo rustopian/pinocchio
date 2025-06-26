@@ -13,7 +13,7 @@ use pinocchio::{
 /// ### Accounts:
 ///   0. `[WRITE]` Nonce account
 ///   1. `[WRITE]` Recipient account
-///   2. `[]` RecentBlockhashes sysvar
+///   2. `[]` `RecentBlockhashes` sysvar
 ///   3. `[]` Rent sysvar
 ///   4. `[SIGNER]` Nonce authority
 pub struct WithdrawNonceAccount<'a> {
@@ -23,7 +23,7 @@ pub struct WithdrawNonceAccount<'a> {
     /// Recipient account.
     pub recipient: &'a AccountInfo,
 
-    /// RecentBlockhashes sysvar.
+    /// `RecentBlockhashes` sysvar.
     pub recent_blockhashes_sysvar: &'a AccountInfo,
 
     /// Rent sysvar.

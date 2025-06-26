@@ -1,4 +1,4 @@
-//! Efficient, zero-copy access to SlotHashes sysvar data.
+//! Efficient, zero-copy access to `SlotHashes` sysvar data.
 
 #[cfg(test)]
 mod test;
@@ -21,7 +21,7 @@ use core::{mem, ops::Deref, slice::from_raw_parts};
 #[cfg(feature = "std")]
 use std::boxed::Box;
 
-/// SysvarS1otHashes111111111111111111111111111
+/// `SysvarS1otHashes111111111111111111111111111`
 pub const SLOTHASHES_ID: Pubkey = [
     6, 167, 213, 23, 25, 47, 10, 175, 198, 242, 101, 227, 251, 119, 204, 122, 218, 130, 197, 41,
     208, 190, 59, 19, 110, 45, 0, 85, 32, 0, 0, 0,
@@ -46,7 +46,7 @@ pub const MAX_SIZE: usize = NUM_ENTRIES_SIZE + MAX_ENTRIES * ENTRY_SIZE;
 pub const ERR_DATA_LEN_MISMATCH: u32 = 0x01;
 /// Declared entry-count > 512
 pub const ERR_ENTRYCOUNT_OVERFLOW: u32 = 0x02;
-/// Account supplied to `from_account_info` is not the SlotHashes sysvar.
+/// Account supplied to `from_account_info` is not the `SlotHashes` sysvar.
 pub const ERR_WRONG_ACCOUNT_KEY: u32 = 0x03;
 
 /// A single entry in the `SlotHashes` sysvar.
@@ -61,7 +61,7 @@ pub struct SlotHashEntry {
 
 const _: [(); 1] = [(); mem::align_of::<SlotHashEntry>()];
 
-/// SlotHashes provides read-only, zero-copy access to SlotHashes sysvar bytes.
+/// `SlotHashes` provides read-only, zero-copy access to `SlotHashes` sysvar bytes.
 pub struct SlotHashes<T: Deref<Target = [u8]>> {
     data: T,
 }
@@ -84,13 +84,13 @@ pub(crate) fn read_entry_count_from_bytes(data: &[u8]) -> Option<usize> {
 /// Reads the entry count from the first 8 bytes of data.
 ///
 /// # Safety
-/// Caller must ensure data has at least NUM_ENTRIES_SIZE bytes.
+/// Caller must ensure data has at least `NUM_ENTRIES_SIZE` bytes.
 #[inline(always)]
 pub(crate) unsafe fn read_entry_count_from_bytes_unchecked(data: &[u8]) -> usize {
     u64::from_le_bytes(*(data.as_ptr() as *const [u8; 8])) as usize
 }
 
-/// Validates SlotHashes data format assuming golden mainnet length and returns the entry count.
+/// Validates `SlotHashes` data format assuming golden mainnet length and returns the entry count.
 ///
 /// The function checks:
 /// 1. The buffer length is exactly `MAX_SIZE` bytes.
@@ -126,7 +126,7 @@ impl SlotHashEntry {
 impl<T: Deref<Target = [u8]>> SlotHashes<T> {
     /// Creates a `SlotHashes` instance from mainnet-sized data with full validation.
     ///
-    /// This constructor expects exactly MAX_SIZE (20,488) bytes and performs validation
+    /// This constructor expects exactly `MAX_SIZE` (20,488) bytes and performs validation
     /// of the entry count. Callers with different buffer sizes must pad their data
     /// to the required length or use test-specific constructors.
     /// Does not validate that entries are sorted in descending order.
@@ -141,7 +141,7 @@ impl<T: Deref<Target = [u8]>> SlotHashes<T> {
     }
 
     /// Creates a `SlotHashes` instance assuming golden mainnet buffer size.
-    /// Reads the entry count from the data but assumes the buffer is MAX_SIZE bytes.
+    /// Reads the entry count from the data but assumes the buffer is `MAX_SIZE` bytes.
     /// Callers with different needs must pad their incomplete sysvar data up to
     /// the required length in test or new network contexts.
     ///
@@ -149,9 +149,9 @@ impl<T: Deref<Target = [u8]>> SlotHashes<T> {
     ///
     /// This function is unsafe because it does not validate the data size or format.
     /// The caller must ensure:
-    /// 1. The underlying byte slice in `data` represents valid SlotHashes data
+    /// 1. The underlying byte slice in `data` represents valid `SlotHashes` data
     ///    (length prefix + entries, where entries are sorted in descending order by slot).
-    /// 2. The data slice contains exactly MAX_SIZE (20,488) bytes.
+    /// 2. The data slice contains exactly `MAX_SIZE` (20,488) bytes.
     /// 3. The first 8 bytes contain a valid entry count in little-endian format.
     ///
     #[inline(always)]

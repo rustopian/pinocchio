@@ -12,11 +12,8 @@ build = "build.rs" # keep 1.82.0 features out until program-tools allows us to m
 [lib]
 crate-type = ["rlib"]
 
-[lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = [
-    'cfg(target_os, values("solana"))',
-    'cfg(target_feature, values("static-syscalls"))',
-] }
+[lints]
+workspace = true
 
 [features]
 std = []

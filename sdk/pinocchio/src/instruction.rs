@@ -28,7 +28,7 @@ pub struct ProcessedSiblingInstruction {
     /// Length of the instruction data
     pub data_len: u64,
 
-    /// Number of AccountMeta structures
+    /// Number of `AccountMeta` structures
     pub accounts_len: u64,
 }
 

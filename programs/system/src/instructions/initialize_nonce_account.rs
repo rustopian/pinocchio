@@ -16,13 +16,13 @@ use pinocchio::{
 ///
 /// ### Accounts:
 ///   0. `[WRITE]` Nonce account
-///   1. `[]` RecentBlockhashes sysvar
+///   1. `[]` `RecentBlockhashes` sysvar
 ///   2. `[]` Rent sysvar
 pub struct InitializeNonceAccount<'a, 'b> {
     /// Nonce account.
     pub account: &'a AccountInfo,
 
-    /// RecentBlockhashes sysvar.
+    /// `RecentBlockhashes` sysvar.
     pub recent_blockhashes_sysvar: &'a AccountInfo,
 
     /// Rent sysvar.

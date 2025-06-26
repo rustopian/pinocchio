@@ -189,7 +189,7 @@ impl Rent {
     ///
     /// # Returns
     ///
-    /// `true`` if the account is rent exempt, `false`` otherwise.
+    /// `true` if the account is rent exempt, `false` otherwise.
     #[inline]
     pub fn is_exempt(&self, lamports: u64, data_len: usize) -> bool {
         lamports >= self.minimum_balance(data_len)

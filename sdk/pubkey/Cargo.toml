@@ -11,6 +11,9 @@ rust-version = { workspace = true }
 [lib]
 crate-type = ["rlib"]
 
+[lints]
+workspace = true
+
 [dependencies]
 five8_const = { workspace = true }
 pinocchio = { workspace = true }
