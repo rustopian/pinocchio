@@ -154,17 +154,14 @@ pub fn log(input: TokenStream) -> TokenStream {
                         replaced_parts.push(quote! { logger.append(#arg) });
                     }
                     value if value.starts_with("{:.") => {
-                        let precision =
-                            if let Ok(precision) = value[3..value.len() - 1].parse::<u8>() {
-                                precision
-                            } else {
-                                return Error::new_spanned(
-                                    format_string,
-                                    format!("invalid precision format: {}", value),
-                                )
-                                .to_compile_error()
-                                .into();
-                            };
+                        let Ok(precision) = value[3..value.len() - 1].parse::<u8>() else {
+                            return Error::new_spanned(
+                                format_string,
+                                format!("invalid precision format: {value}"),
+                            )
+                            .to_compile_error()
+                            .into();
+                        };
 
                         replaced_parts.push(quote! {
                             logger.append_with_args(
@@ -174,12 +171,10 @@ pub fn log(input: TokenStream) -> TokenStream {
                         });
                     }
                     value if value.starts_with("{:<.") || value.starts_with("{:>.") => {
-                        let size = if let Ok(size) = value[4..value.len() - 1].parse::<usize>() {
-                            size
-                        } else {
+                        let Ok(size) = value[4..value.len() - 1].parse::<usize>() else {
                             return Error::new_spanned(
                                 format_string,
-                                format!("invalid truncate size format: {}", value),
+                                format!("invalid truncate size format: {value}"),
                             )
                             .to_compile_error()
                             .into();
@@ -206,7 +201,7 @@ pub fn log(input: TokenStream) -> TokenStream {
                                 // This should not happen since we already checked the format.
                                 return Error::new_spanned(
                                     format_string,
-                                    format!("invalid truncate format: {}", value),
+                                    format!("invalid truncate format: {value}"),
                                 )
                                 .to_compile_error()
                                 .into();
@@ -216,7 +211,7 @@ pub fn log(input: TokenStream) -> TokenStream {
                     _ => {
                         return Error::new_spanned(
                             format_string,
-                            format!("invalid placeholder: {}", placeholder),
+                            format!("invalid placeholder: {placeholder}"),
                         )
                         .to_compile_error()
                         .into();

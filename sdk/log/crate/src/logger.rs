@@ -80,14 +80,14 @@ impl<const BUFFER: usize> Deref for Logger<BUFFER> {
 impl<const BUFFER: usize> Logger<BUFFER> {
     /// Append a value to the logger.
     #[inline(always)]
-    pub fn append<T: Log>(&mut self, value: T) -> &mut Self {
+    pub fn append<T: Log>(&mut self, value: &T) -> &mut Self {
         self.append_with_args(value, &[]);
         self
     }
 
     /// Append a value to the logger with formatting arguments.
     #[inline]
-    pub fn append_with_args<T: Log>(&mut self, value: T, args: &[Argument]) -> &mut Self {
+    pub fn append_with_args<T: Log>(&mut self, value: &T, args: &[Argument]) -> &mut Self {
         if self.is_full() {
             if BUFFER > 0 {
                 // SAFETY: the buffer is checked to be full.
@@ -150,7 +150,7 @@ pub fn log_message(message: &[u8]) {
     #[cfg(not(target_os = "solana"))]
     {
         let message = core::str::from_utf8(message).unwrap();
-        std::println!("{}", message);
+        std::println!("{message}");
     }
 }
 
@@ -433,20 +433,16 @@ impl Log for &str {
         let mut offset = 1;
         offset += self.write(&mut buffer[offset..]);
 
-        match buffer.len() - offset {
-            0 => {
-                // SAFETY: the buffer is guaranteed to be within `offset` bounds.
-                unsafe {
-                    buffer.get_unchecked_mut(offset - 1).write(TRUNCATED);
-                }
+        if buffer.len() - offset == 0 {
+            // SAFETY: the buffer is guaranteed to be within `offset` bounds.
+            unsafe {
+                buffer.get_unchecked_mut(offset - 1).write(TRUNCATED);
             }
-            _ => {
-                // SAFETY: the buffer is guaranteed to be within `offset` bounds.
-                unsafe {
-                    buffer.get_unchecked_mut(offset).write(b'"');
-                }
-                offset += 1;
+            // SAFETY: the buffer is guaranteed to be within `offset` bounds.
+            unsafe {
+                buffer.get_unchecked_mut(offset).write(b'"');
             }
+            offset += 1;
         }
 
         offset

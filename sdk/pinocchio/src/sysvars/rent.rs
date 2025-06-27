@@ -36,7 +36,7 @@ const DEFAULT_EXEMPTION_THRESHOLD_AS_U64: u64 = 2;
 /// The `u64` representation of the default exemption threshold.
 ///
 /// This is used to check whether the `f64` value can be safely cast to a `u64`.
-const F64_EXEMPTION_THRESHOLD_AS_U64: u64 = 4611686018427387904;
+const F64_EXEMPTION_THRESHOLD_AS_U64: u64 = 4_611_686_018_427_387_904;
 
 /// Default percentage of collected rent that is burned.
 ///

@@ -206,10 +206,10 @@ impl IntrospectedInstruction<'_> {
 }
 
 /// The bit positions for the signer flags in the `AccountMeta`.
-const IS_SIGNER: u8 = 0b00000001;
+const IS_SIGNER: u8 = 0b0000_0001;
 
 /// The bit positions for the writable flags in the `AccountMeta`.
-const IS_WRITABLE: u8 = 0b00000010;
+const IS_WRITABLE: u8 = 0b0000_0010;
 
 #[repr(C)]
 #[derive(Clone, PartialEq, Eq)]

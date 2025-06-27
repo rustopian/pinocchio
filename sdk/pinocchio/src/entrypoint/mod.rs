@@ -14,7 +14,7 @@ use crate::{
 };
 
 /// Start address of the memory region used for program heap.
-pub const HEAP_START_ADDRESS: u64 = 0x300000000;
+pub const HEAP_START_ADDRESS: u64 = 0x3000_0000_0000;
 
 /// Length of the heap memory region used for program heap.
 pub const HEAP_LENGTH: usize = 32 * 1024;

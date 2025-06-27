@@ -6,7 +6,7 @@
 //! when including the sysvar account is infeasible.
 #![allow(clippy::inline_always)]
 
-use super::*;
+use super::{ENTRY_SIZE, MAX_ENTRIES, MAX_SIZE, NUM_ENTRIES_SIZE, ProgramError, SLOTHASHES_ID, read_entry_count_from_bytes};
 
 pub const ERR_RAW_BAD_SHAPE: u32 = 0x10; // buffer not 8 + n*40
 pub const ERR_RAW_ENTRY_OVERFLOW: u32 = 0x11; // >512 entries possible / declared
