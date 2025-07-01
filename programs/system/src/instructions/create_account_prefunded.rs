@@ -47,7 +47,8 @@ impl CreateAccountPrefunded<'_> {
         // - [12..20]: account space
         // - [20..52]: owner pubkey
         let mut instruction_data = [0; 52];
-        // create account instruction has a '0' discriminator
+        // CreateAccountPrefunded instruction has a '13' discriminator
+        instruction_data[0..4].copy_from_slice(&13_u32.to_le_bytes());
         instruction_data[4..12].copy_from_slice(&self.lamports.to_le_bytes());
         instruction_data[12..20].copy_from_slice(&self.space.to_le_bytes());
         instruction_data[20..52].copy_from_slice(self.owner.as_ref());
