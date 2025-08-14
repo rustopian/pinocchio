@@ -2,7 +2,9 @@ use pinocchio::{
     account_info::AccountInfo,
     instruction::{AccountMeta, Instruction, Signer},
     program::invoke_signed,
+    program_error::ProgramError,
     pubkey::Pubkey,
+    sysvars::rent::Rent,
     ProgramResult,
 };
 
@@ -28,7 +30,27 @@ pub struct CreateAccount<'a> {
     pub owner: &'a Pubkey,
 }
 
-impl CreateAccount<'_> {
+impl<'a> CreateAccount<'a> {
+    #[inline(always)]
+    pub fn with_minimal_balance(
+        from: &'a AccountInfo,
+        to: &'a AccountInfo,
+        rent_sysvar: &'a AccountInfo,
+        space: u64,
+        owner: &'a Pubkey,
+    ) -> Result<Self, ProgramError> {
+        let rent = Rent::from_account_info(rent_sysvar)?;
+        let lamports = rent.minimum_balance(space as usize);
+
+        Ok(Self {
+            from,
+            to,
+            lamports,
+            space,
+            owner,
+        })
+    }
+
     #[inline(always)]
     pub fn invoke(&self) -> ProgramResult {
         self.invoke_signed(&[])
