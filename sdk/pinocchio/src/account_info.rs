@@ -625,7 +625,13 @@ impl AccountInfo {
     }
 
     /// Returns the memory address of the account data.
-    fn data_ptr(&self) -> *mut u8 {
+    /// # Important
+    ///
+    /// Obtaining the raw pointer itself is safe, but de-referencing it requires
+    /// the caller to uphold Rust's aliasing rules. It is undefined behavior to de-reference
+    /// the pointer or write through it while any safe reference (e.g., from any of `borrow_data`
+    /// or `borrow_mut_data` methods) to the same data is still alive.
+    pub fn data_ptr(&self) -> *mut u8 {
         unsafe { (self.raw as *mut u8).add(core::mem::size_of::<Account>()) }
     }
 }
@@ -924,8 +930,8 @@ mod tests {
     #[test]
     fn test_borrow_data() {
         // 8-bytes aligned account data.
-        let mut data = [0u64; size_of::<Account>() / size_of::<u64>()];
-        // Set the borrow state.
+        let mut data = [0u64; size_of::<Account>() / size_of::<u64>() + 1]; // extra byte at end for account data
+                                                                            // Set the borrow state.
         data[0] = NOT_BORROWED as u64;
         let account_info = AccountInfo {
             raw: data.as_mut_ptr() as *mut Account,
@@ -936,6 +942,13 @@ mod tests {
         assert!(account_info.can_borrow_mut_data().is_ok());
         assert!(account_info.can_borrow_lamports().is_ok());
         assert!(account_info.can_borrow_mut_lamports().is_ok());
+
+        // It should be sound to mutate the data through the data pointer while no other borrows exist
+        let data_ptr = account_info.data_ptr();
+        unsafe {
+            let data = core::slice::from_raw_parts_mut(data_ptr, 1); // Data is 1 byte long!
+            data[0] = 1;
+        }
 
         // Borrow immutable data (7 immutable borrows available).
         const ACCOUNT_REF: MaybeUninit<Ref<[u8]>> = MaybeUninit::<Ref<[u8]>>::uninit();
@@ -969,6 +982,8 @@ mod tests {
 
         // Borrow mutable data.
         let ref_mut = account_info.try_borrow_mut_data().unwrap();
+        // It should be sound to get the data pointer while the data is borrowed as long as we don't use it
+        let _data_ptr = account_info.data_ptr();
 
         // Check that we cannot borrow the data anymore.
         assert!(account_info.can_borrow_data().is_err());
@@ -1070,9 +1085,16 @@ mod tests {
         assert_eq!(account.data_len(), 100);
         assert_eq!(account.resize_delta(), 0);
 
+        // We should be able to get the data pointer whenever as long as we don't use it while the data is borrowed
+        let data_ptr_before = account.data_ptr();
+
         // increase the size.
 
         account.realloc(200, false).unwrap();
+
+        let data_ptr_after = account.data_ptr();
+        // The data pointer should point to the same address regardless of the reallocation
+        assert_eq!(data_ptr_before, data_ptr_after);
 
         assert_eq!(account.data_len(), 200);
         assert_eq!(account.resize_delta(), 100);
