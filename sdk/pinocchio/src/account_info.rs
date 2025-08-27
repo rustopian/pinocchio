@@ -670,12 +670,32 @@ impl<'a, T: ?Sized> Ref<'a, T> {
     {
         // Avoid decrementing the borrow flag on Drop.
         let orig = ManuallyDrop::new(orig);
-
         Ref {
             value: NonNull::from(f(&*orig)),
             state: orig.state,
             borrow_shift: orig.borrow_shift,
             marker: PhantomData,
+        }
+    }
+
+    /// Tries to makes a new `Ref` for a component of the borrowed data.
+    /// On failure, the original guard is returned alongside with the error
+    /// returned by the closure.
+    #[inline]
+    pub fn try_map<U: ?Sized, E>(
+        orig: Ref<'a, T>,
+        f: impl FnOnce(&T) -> Result<&U, E>,
+    ) -> Result<Ref<'a, U>, (Self, E)> {
+        // Avoid decrementing the borrow flag on Drop.
+        let orig = ManuallyDrop::new(orig);
+        match f(&*orig) {
+            Ok(value) => Ok(Ref {
+                value: NonNull::from(value),
+                state: orig.state,
+                borrow_shift: orig.borrow_shift,
+                marker: PhantomData,
+            }),
+            Err(e) => Err((ManuallyDrop::into_inner(orig), e)),
         }
     }
 
@@ -742,12 +762,32 @@ impl<'a, T: ?Sized> RefMut<'a, T> {
     {
         // Avoid decrementing the borrow flag on Drop.
         let mut orig = ManuallyDrop::new(orig);
-
         RefMut {
             value: NonNull::from(f(&mut *orig)),
             state: orig.state,
             borrow_bitmask: orig.borrow_bitmask,
             marker: PhantomData,
+        }
+    }
+
+    /// Tries to makes a new `RefMut` for a component of the borrowed data.
+    /// On failure, the original guard is returned alongside with the error
+    /// returned by the closure.
+    #[inline]
+    pub fn try_map<U: ?Sized, E>(
+        orig: RefMut<'a, T>,
+        f: impl FnOnce(&mut T) -> Result<&mut U, E>,
+    ) -> Result<RefMut<'a, U>, (Self, E)> {
+        // Avoid decrementing the borrow flag on Drop.
+        let mut orig = ManuallyDrop::new(orig);
+        match f(&mut *orig) {
+            Ok(value) => Ok(RefMut {
+                value: NonNull::from(value),
+                state: orig.state,
+                borrow_bitmask: orig.borrow_bitmask,
+                marker: PhantomData,
+            }),
+            Err(e) => Err((ManuallyDrop::into_inner(orig), e)),
         }
     }
 
@@ -759,17 +799,13 @@ impl<'a, T: ?Sized> RefMut<'a, T> {
     {
         // Avoid decrementing the mutable borrow flag on Drop.
         let mut orig = ManuallyDrop::new(orig);
-
         match f(&mut *orig) {
-            Some(value) => {
-                let value = NonNull::from(value);
-                Ok(RefMut {
-                    value,
-                    state: orig.state,
-                    borrow_bitmask: orig.borrow_bitmask,
-                    marker: PhantomData,
-                })
-            }
+            Some(value) => Ok(RefMut {
+                value: NonNull::from(value),
+                state: orig.state,
+                borrow_bitmask: orig.borrow_bitmask,
+                marker: PhantomData,
+            }),
             None => Err(ManuallyDrop::into_inner(orig)),
         }
     }
@@ -826,6 +862,19 @@ mod tests {
 
         assert_eq!(state, NOT_BORROWED - (1 << DATA_BORROW_SHIFT));
         assert_eq!(*new_ref, 3);
+
+        let Ok(new_ref) = Ref::try_map::<_, u8>(new_ref, |_| Ok(&4)) else {
+            unreachable!()
+        };
+
+        assert_eq!(state, NOT_BORROWED - (1 << DATA_BORROW_SHIFT));
+        assert_eq!(*new_ref, 4);
+
+        let (new_ref, err) = Ref::try_map::<u8, u8>(new_ref, |_| Err(5)).unwrap_err();
+        assert_eq!(state, NOT_BORROWED - (1 << DATA_BORROW_SHIFT));
+        assert_eq!(err, 5);
+        // Unchanged
+        assert_eq!(*new_ref, 4);
 
         let new_ref = Ref::filter_map(new_ref, |_| Option::<&u8>::None);
 
